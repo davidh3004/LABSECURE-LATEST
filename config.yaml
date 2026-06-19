@@ -1,0 +1,95 @@
+# LabSecure AI v2 — Central Configuration
+# =====================================================
+
+app:
+  name: "LabSecure AI v2"
+  version: "2.0.0"
+  debug: true
+  host: "0.0.0.0"
+  port: 8000
+
+# Firebase Configuration
+firebase:
+  credentials_path: "firebase-service-account.json"
+  project_id: "face-recognition-27d15"
+  storage_bucket: "face-recognition-27d15.firebasestorage.app"
+
+# Camera Configuration
+cameras:
+  - id: "cam_ip_01"
+    name: "Lab Entrance Camera"
+    type: "ip"
+    url: "rtsp://192.168.1.101:554/stream1"
+    static_ip: "192.168.1.101"
+    switch_port: 1
+    enabled: false
+
+  - id: "cam_ip_02"
+    name: "Lab Interior Camera"
+    type: "ip"
+    url: "rtsp://192.168.1.102:554/stream1"
+    static_ip: "192.168.1.102"
+    switch_port: 2
+    enabled: false
+
+  - id: "cam_axis_01"
+    name: "Axis P1447-LE"
+    type: "ip"
+    url: "rtsp://root:admin12345$_@192.168.0.90:554/axis-media/media.amp"
+    static_ip: "192.168.0.90"
+    switch_port: 3
+    enabled: true
+
+  - id: "cam_webcam"
+    name: "Laptop Webcam"
+    type: "webcam"
+    device_index: 0
+    enabled: true
+
+# Network Monitoring
+network:
+  switch_ip: "192.168.1.1"
+  ping_interval_seconds: 30
+  ping_timeout_seconds: 2
+
+# Vision Pipeline
+vision:
+  # Execution provider: "openvino" (Intel), "cuda" (NVIDIA), "cpu" (fallback), "coreml" (Apple Silicon)
+  execution_provider: "cuda"
+  model_name: "buffalo_sc"              # buffalo_sc = fast (CPU-optimised), buffalo_l = accurate (GPU)
+  det_size: 320                         # 320 = fast (CPU-friendly), approved as working well for IP cam
+  detection_threshold: 0.5
+  recognition_threshold: 0.28
+  liveness_threshold: 0.4
+  target_fps: 25                        # benchmark: JPEG@640px=2.3ms, inference=12ms — CPU is not the bottleneck
+  recognition_interval_frames: 5        # Run recognition every 5 detection cycles
+  stream_width: 640                     # Downscale output to 640px wide (2.3ms encode vs 11ms at 1280px)
+  stream_quality: 70                    # JPEG quality 70: good balance of size and visual quality
+  max_faces_per_frame: 5
+
+# Centroid Tracker
+tracker:
+  max_disappeared_frames: 5         # Lowered to force fast identity resets
+  max_distance: 85                  # Relaxed distance slightly for webcam buffer
+
+# Anti-Spoofing Liveness
+liveness:
+  lbp_weight: 0.4
+  edge_weight: 0.3
+  color_weight: 0.3
+  min_face_size: 80                 # Minimum face crop size for reliable analysis
+
+# Encryption
+encryption:
+  master_key_env: "LABSECURE_MASTER_KEY"   # 32-byte hex key in env variable
+  algorithm: "AES-256-GCM"
+
+# Anomaly Detection
+anomaly:
+  multi_camera_window_seconds: 60
+  unknown_face_alert_threshold: 2   # Number of cameras before alert
+  cooldown_seconds: 300             # Don't re-alert for same face within this window
+
+# Access Control
+access_control:
+  guest_grace_period_minutes: 5     # Extra minutes after guest expiry before hard deny
