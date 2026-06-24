@@ -9,6 +9,7 @@ import type {
     DoorStatus, KnockResponse, SimClockState,
     AttendanceSession, AttendanceResponse,
 } from './types';
+import { MOCK_ENABLED, installMock, createFakeFeedSocket } from './mock';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 
@@ -20,6 +21,11 @@ const api = axios.create({
         'ngrok-skip-browser-warning': 'true',
     },
 });
+
+// Mock mode: serve every request from in-memory fixtures (no backend needed).
+if (MOCK_ENABLED) {
+    installMock(api);
+}
 
 // Interceptor to attach the auth token to all requests
 api.interceptors.request.use((config) => {
@@ -152,6 +158,9 @@ export const roomsApi = {
 
 // ── WebSocket Feed ──────────────────────────────────────
 export function createFeedSocket(cameraId: string): WebSocket {
+    if (MOCK_ENABLED) {
+        return createFakeFeedSocket();
+    }
     const wsBase = API_BASE
         ? API_BASE.replace(/^http/, 'ws')
         : `ws://${window.location.hostname}:8000`;

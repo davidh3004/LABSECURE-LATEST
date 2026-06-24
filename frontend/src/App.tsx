@@ -7,6 +7,7 @@ import {
     UserPlus, Camera, AlertTriangle, ShieldAlert, DoorOpen, Lock
 } from 'lucide-react';
 import { emergencyApi } from './api/client';
+import { MOCK_ENABLED } from './api/mock';
 import type { SystemState } from './api/types';
 
 import {
@@ -175,6 +176,25 @@ function AppContent() {
                         <h1 className="top-bar-title"><PageTitle /></h1>
                     </div>
                     <div className="top-bar-right" style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                        {MOCK_ENABLED && (
+                            <select
+                                value={role}
+                                onChange={(e) => {
+                                    const next = e.target.value as UserRole;
+                                    localStorage.setItem('admin_role', next);
+                                    setRole(next);
+                                }}
+                                title="Mock mode: switch role"
+                                style={{
+                                    padding: '4px 8px', borderRadius: 6, fontSize: 13,
+                                    border: '1px dashed var(--color-primary)', background: 'var(--bg-card)',
+                                    color: 'var(--text-main)', cursor: 'pointer',
+                                }}
+                            >
+                                <option value="admin">🔑 Admin (mock)</option>
+                                <option value="teacher">👩‍🏫 Teacher (mock)</option>
+                            </select>
+                        )}
                         <span className={`badge ${role === 'teacher' ? 'badge-warning' : 'badge-success'}`}>
                             {role === 'teacher' ? '👩‍🏫 Teacher' : '🔑 Admin'}
                         </span>
