@@ -131,8 +131,8 @@ const body = (cfg: AxiosRequestConfig) => {
 
 const routes: Route[] = [
     // ── Auth ──
-    { method: 'post', pattern: /\/api\/auth\/login$/, handler: (_m, c) => ({ access_token: 'mock-token', token_type: 'bearer', role: (body(c).username || '').toLowerCase().includes('teacher') ? 'teacher' : 'admin' }) },
-    { method: 'get', pattern: /\/api\/auth\/me$/, handler: () => ({ username: 'admin', role: localStorage.getItem('admin_role') || 'admin' }) },
+    { method: 'post', pattern: /\/api\/auth\/login$/, handler: (_m, c) => { const role = (body(c).username || '').toLowerCase().includes('teacher') ? 'teacher' : 'admin'; const teacher = users.find(u => u.role === 'teacher'); return { access_token: 'mock-token', token_type: 'bearer', role, user_id: role === 'teacher' ? (teacher?.id ?? null) : null }; } },
+    { method: 'get', pattern: /\/api\/auth\/me$/, handler: () => { const role = localStorage.getItem('admin_role') || 'admin'; const teacher = users.find(u => u.role === 'teacher'); return { username: role === 'teacher' ? (teacher?.name ?? 'teacher') : 'admin', role, user_id: role === 'teacher' ? (teacher?.id ?? null) : null }; } },
     { method: 'get', pattern: /\/api\/auth\/admins$/, handler: () => ok(admins) },
     { method: 'post', pattern: /\/api\/auth\/admins$/, handler: (_m, c) => { const a = { id: newId('a'), username: body(c).username, role: body(c).role || 'admin', created_at: iso() }; admins.push(a); return a; } },
     { method: 'delete', pattern: /\/api\/auth\/admins\/([^/]+)$/, handler: (m) => { const i = admins.findIndex(a => a.id === m[1]); if (i >= 0) admins.splice(i, 1); return { status: 'deleted' }; } },

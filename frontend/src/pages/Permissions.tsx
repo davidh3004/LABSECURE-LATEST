@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react';
 import { Plus, Trash2, X, Shield, Key, Clock, ChevronDown, ChevronUp } from 'lucide-react';
 import { permissionsApi, usersApi, schedulesApi } from '../api/client';
+import { confirmDialog } from '../components/ui/ConfirmDialog';
+import { toast } from '../components/ui/Toast';
 import type { Permission, User, UserRole, Schedule } from '../api/types';
 
 const ROLES: UserRole[] = ['student', 'teacher', 'employee', 'janitor', 'security', 'admin'];
@@ -45,21 +47,31 @@ export default function PermissionsPage() {
         setShowModal(false);
         setForm({ ...emptyForm });
         load();
+        toast.success('Permission created');
     };
 
     const toggleUnlock = async (perm: Permission) => {
         await permissionsApi.update(perm.id!, { can_unlock: !perm.can_unlock });
         load();
+        toast.success('Permission updated');
     };
 
     const toggleOutside = async (perm: Permission) => {
         await permissionsApi.update(perm.id!, { can_access_outside_schedule: !perm.can_access_outside_schedule });
         load();
+        toast.success('Permission updated');
     };
 
     const handleDelete = async (id: string) => {
+        const ok = await confirmDialog({
+            title: 'Delete permission?',
+            message: 'This access permission will be removed.',
+            confirmLabel: 'Delete',
+        });
+        if (!ok) return;
         await permissionsApi.delete(id);
         load();
+        toast.success('Permission deleted');
     };
 
     const toggleSchedule = (id: string) => {

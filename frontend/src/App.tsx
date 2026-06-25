@@ -8,6 +8,8 @@ import {
 } from 'lucide-react';
 import { emergencyApi } from './api/client';
 import { MOCK_ENABLED } from './api/mock';
+import { ConfirmHost } from './components/ui/ConfirmDialog';
+import { ToastHost } from './components/ui/Toast';
 import type { SystemState } from './api/types';
 
 import {
@@ -84,27 +86,28 @@ function Sidebar({ role }: { role: UserRole }) {
                 </div>
             </div>
             <nav className="sidebar-nav">
-                {navItems.map(section => (
-                    <div key={section.section}>
-                        <div className="nav-section-label">{section.section}</div>
-                        {section.items.map(item => {
-                            const isRestricted = role === 'teacher' && !TEACHER_ALLOWED_PATHS.includes(item.path);
-                            return (
+                {navItems.map(section => {
+                    const items = section.items.filter(
+                        item => role !== 'teacher' || TEACHER_ALLOWED_PATHS.includes(item.path)
+                    );
+                    if (items.length === 0) return null;
+                    return (
+                        <div key={section.section}>
+                            <div className="nav-section-label">{section.section}</div>
+                            {items.map(item => (
                                 <NavLink
                                     key={item.path}
                                     to={item.path}
                                     end={item.path === '/'}
                                     className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-                                    style={isRestricted ? { opacity: 0.4 } : {}}
                                 >
                                     <item.icon />
                                     {item.label}
-                                    {isRestricted && <Lock size={12} style={{ marginLeft: 'auto', opacity: 0.5 }} />}
                                 </NavLink>
-                            );
-                        })}
-                    </div>
-                ))}
+                            ))}
+                        </div>
+                    );
+                })}
             </nav>
         </aside>
     );
@@ -232,6 +235,8 @@ export default function App() {
     return (
         <BrowserRouter>
             <AppContent />
+            <ConfirmHost />
+            <ToastHost />
         </BrowserRouter>
     );
 }

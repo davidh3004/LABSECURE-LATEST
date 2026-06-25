@@ -7,6 +7,7 @@ import {
     ScanLine, UserX, Eye,
 } from 'lucide-react';
 import { doorsApi, simClockApi } from '../api/client';
+import { toast } from '../components/ui/Toast';
 import type { DoorStatus, KnockResponse, SimClockState, UnknownVisitorEntry, VisitorEntry } from '../api/types';
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
@@ -47,7 +48,8 @@ export default function DoorSimulation() {
             const res = await simClockApi.set(selDate, selHour, selMinute);
             setClock(res);
             await refresh();
-        } catch { /* ignore */ }
+            toast.success('Simulated time set');
+        } catch { toast.error('Failed to set simulated time'); }
     };
 
     const handleResetClock = async () => {
@@ -55,7 +57,8 @@ export default function DoorSimulation() {
             const res = await simClockApi.reset();
             setClock(res);
             await refresh();
-        } catch { /* ignore */ }
+            toast.success('Simulated time reset');
+        } catch { toast.error('Failed to reset simulated time'); }
     };
 
     const handleKnock = async (roomId: string) => {

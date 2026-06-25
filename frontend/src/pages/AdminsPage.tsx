@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react';
 import { Shield, Plus, Trash2, X, Loader2, GraduationCap } from 'lucide-react';
 import { authApi, usersApi } from '../api/client';
+import { confirmDialog } from '../components/ui/ConfirmDialog';
+import { toast } from '../components/ui/Toast';
 import type { User } from '../api/types';
 
 export default function AdminsPage() {
@@ -44,6 +46,7 @@ export default function AdminsPage() {
             setPassword('');
             setRole('admin');
             load();
+            toast.success('Account created');
         } catch (err: any) {
             setError(err.response?.data?.detail || 'Failed to create account');
         } finally {
@@ -52,12 +55,18 @@ export default function AdminsPage() {
     };
 
     const handleDelete = async (id: string) => {
-        if (!confirm('Are you sure you want to delete this account?')) return;
+        const ok = await confirmDialog({
+            title: 'Delete account?',
+            message: 'This account will be permanently deleted and lose all access.',
+            confirmLabel: 'Delete',
+        });
+        if (!ok) return;
         try {
             await authApi.deleteAdmin(id);
             load();
+            toast.success('Account deleted');
         } catch (err: any) {
-            alert(err.response?.data?.detail || 'Failed to delete account');
+            toast.error(err.response?.data?.detail || 'Failed to delete account');
         }
     };
 

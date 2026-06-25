@@ -1,8 +1,10 @@
 /* Schedule.tsx — Weekly Schedule Manager with Student Enrollment */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Pencil, Trash2, X, Clock, Search, UserPlus, UserMinus, Users, DoorOpen, ClipboardList, CheckCircle, XCircle, Download, ScanLine, UserX, Eye, AlertTriangle } from 'lucide-react';
-import { schedulesApi, usersApi, roomsApi, doorsApi } from '../api/client';
+import { Plus, Pencil, Trash2, X, Clock, Search, UserPlus, UserMinus, Users, DoorOpen, ClipboardList, CheckCircle, XCircle, Download, ScanLine, UserX, Eye, AlertTriangle, MoreVertical, ChevronDown } from 'lucide-react';
+import { schedulesApi, usersApi, roomsApi, doorsApi, authApi } from '../api/client';
+import { confirmDialog } from '../components/ui/ConfirmDialog';
+import { toast } from '../components/ui/Toast';
 import type { Schedule, ScheduleCreate, User, Room, AttendanceSession, AttendanceResponse, DoorStatus, UnknownVisitorEntry, VisitorEntry } from '../api/types';
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
@@ -42,6 +44,7 @@ function EnrollmentModal({
     const enrolledUsers = allUsers.filter(u => enrolled.includes(u.id!));
     const searchResults = search.trim().length > 0
         ? allUsers.filter(u =>
+            u.role === 'student' &&
             !enrolled.includes(u.id!) &&
             (u.name.toLowerCase().includes(search.toLowerCase()) ||
                 (u.student_id || '').toLowerCase().includes(search.toLowerCase()))
@@ -55,8 +58,10 @@ function EnrollmentModal({
         try {
             await schedulesApi.update(schedule.id!, { user_overrides: updated });
             onUpdate();
+            toast.success('Student enrolled');
         } catch { /* roll back on error */
             setEnrolled(enrolled);
+            toast.error('Failed to enroll student');
         }
         setSaving(false);
         setSearch('');
@@ -70,8 +75,10 @@ function EnrollmentModal({
         try {
             await schedulesApi.update(schedule.id!, { user_overrides: updated });
             onUpdate();
+            toast.success('Student removed');
         } catch {
             setEnrolled(enrolled);
+            toast.error('Failed to remove student');
         }
         setSaving(false);
     };
@@ -241,6 +248,14 @@ function AttendanceModal({
     const [attendance, setAttendance] = useState<AttendanceResponse | null>(null);
     const [loadingSessions, setLoadingSessions] = useState(true);
     const [loadingAttendance, setLoadingAttendance] = useState(false);
+    const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
+
+    useEffect(() => {
+        if (!sessionMenuOpen) return;
+        const close = () => setSessionMenuOpen(false);
+        window.addEventListener('click', close);
+        return () => window.removeEventListener('click', close);
+    }, [sessionMenuOpen]);
 
     useEffect(() => {
         setLoadingSessions(true);
@@ -304,6 +319,8 @@ function AttendanceModal({
         URL.revokeObjectURL(url);
     };
 
+    const selectedSession = sessions.find(s => s.date === selectedDate) || null;
+
     return (
         <div className="modal-overlay" onClick={onClose}>
             <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 720, height: '80vh', display: 'flex', flexDirection: 'column' }}>
@@ -315,53 +332,73 @@ function AttendanceModal({
                     <button className="btn btn-ghost" onClick={onClose}><X size={18} /></button>
                 </div>
 
-                <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-                    {/* Left: session list */}
-                    <div style={{
-                        width: 200, flexShrink: 0, borderRight: '1px solid var(--border)',
-                        overflowY: 'auto', padding: '12px 0',
-                    }}>
+                <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+                    {/* Session selector — dropdown */}
+                    <div style={{ padding: '16px 20px 4px', flexShrink: 0 }}>
                         <div style={{
                             fontSize: 11, fontWeight: 600, textTransform: 'uppercase',
-                            letterSpacing: '0.05em', color: 'var(--text-tertiary)',
-                            padding: '0 14px 8px',
+                            letterSpacing: '0.05em', color: 'var(--text-tertiary)', marginBottom: 6,
                         }}>
                             Past Sessions
                         </div>
-                        {loadingSessions ? (
-                            <div style={{ padding: '20px 14px', color: 'var(--text-tertiary)', fontSize: 13 }}>Loading…</div>
-                        ) : sessions.length === 0 ? (
-                            <div style={{ padding: '20px 14px', color: 'var(--text-tertiary)', fontSize: 13 }}>No sessions yet</div>
-                        ) : (
-                            sessions.map(s => (
-                                <button
-                                    key={s.date}
-                                    onClick={() => setSelectedDate(s.date)}
-                                    style={{
-                                        display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
-                                        width: '100%', padding: '10px 14px', border: 'none', cursor: 'pointer',
-                                        background: selectedDate === s.date ? 'var(--color-primary-bg)' : 'transparent',
-                                        borderLeft: selectedDate === s.date ? '3px solid var(--color-primary)' : '3px solid transparent',
-                                        color: selectedDate === s.date ? 'var(--color-primary)' : 'var(--text-primary)',
-                                        textAlign: 'left', transition: 'background 0.15s',
-                                    }}
-                                >
-                                    <span style={{ fontSize: 12, fontWeight: 600 }}>
-                                        {new Date(s.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                                    </span>
-                                    <span style={{ fontSize: 11, color: s.count > 0 ? 'var(--color-success)' : 'var(--text-tertiary)', marginTop: 2 }}>
-                                        {s.count > 0 ? `${s.count} present` : 'No entries'}
-                                    </span>
-                                </button>
-                            ))
-                        )}
+                        <div style={{ position: 'relative', maxWidth: 320 }}>
+                            <button
+                                type="button"
+                                className="session-select"
+                                onClick={(e) => { e.stopPropagation(); setSessionMenuOpen(o => !o); }}
+                                disabled={loadingSessions || sessions.length === 0}
+                                aria-haspopup="listbox"
+                                aria-expanded={sessionMenuOpen}
+                            >
+                                <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', minWidth: 0 }}>
+                                    {loadingSessions ? (
+                                        <span style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>Loading…</span>
+                                    ) : sessions.length === 0 ? (
+                                        <span style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>No sessions yet</span>
+                                    ) : (
+                                        <>
+                                            <span style={{ fontWeight: 600, fontSize: 13 }}>
+                                                {selectedDate ? formatDate(selectedDate) : 'Select a session'}
+                                            </span>
+                                            {selectedSession && (
+                                                <span style={{ fontSize: 11, marginTop: 1, color: selectedSession.count > 0 ? 'var(--color-success)' : 'var(--text-tertiary)' }}>
+                                                    {selectedSession.count > 0 ? `${selectedSession.count} present` : 'No entries'}
+                                                </span>
+                                            )}
+                                        </>
+                                    )}
+                                </span>
+                                <ChevronDown size={16} style={{ flexShrink: 0, transition: 'transform 0.15s', transform: sessionMenuOpen ? 'rotate(180deg)' : 'none' }} />
+                            </button>
+                            {sessionMenuOpen && (
+                                <div className="session-menu" role="listbox" onClick={(e) => e.stopPropagation()}>
+                                    {sessions.map(s => (
+                                        <button
+                                            key={s.date}
+                                            type="button"
+                                            role="option"
+                                            aria-selected={selectedDate === s.date}
+                                            className={`session-menu-item ${selectedDate === s.date ? 'active' : ''}`}
+                                            onClick={() => { setSelectedDate(s.date); setSessionMenuOpen(false); }}
+                                        >
+                                            <span style={{ fontWeight: 600, fontSize: 13 }}>
+                                                {new Date(s.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                                            </span>
+                                            <span style={{ fontSize: 11, color: s.count > 0 ? 'var(--color-success)' : 'var(--text-tertiary)' }}>
+                                                {s.count > 0 ? `${s.count} present` : 'No entries'}
+                                            </span>
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
                     </div>
 
-                    {/* Right: attendance for selected date */}
+                    {/* Attendance content — full width */}
                     <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
                         {!selectedDate ? (
                             <div style={{ color: 'var(--text-tertiary)', fontSize: 13, paddingTop: 40, textAlign: 'center' }}>
-                                Select a session on the left
+                                Select a session above
                             </div>
                         ) : loadingAttendance ? (
                             <div style={{ color: 'var(--text-tertiary)', fontSize: 13, paddingTop: 40, textAlign: 'center' }}>Loading…</div>
@@ -706,6 +743,23 @@ export default function SchedulePage({ role = 'admin' }: { role?: 'admin' | 'tea
     const [enrollSchedule, setEnrollSchedule] = useState<Schedule | null>(null);
     const [attendanceSchedule, setAttendanceSchedule] = useState<Schedule | null>(null);
     const [form, setForm] = useState<ScheduleCreate>({ ...emptyForm });
+    const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+    const [teacherUserId, setTeacherUserId] = useState<string | null>(null);
+
+    // Close the card action menu on any outside click
+    useEffect(() => {
+        const close = () => setMenuOpenId(null);
+        window.addEventListener('click', close);
+        return () => window.removeEventListener('click', close);
+    }, []);
+
+    // Resolve which teacher is logged in, to scope the schedule list
+    useEffect(() => {
+        if (!isTeacher) { setTeacherUserId(null); return; }
+        authApi.getMe()
+            .then(me => setTeacherUserId(me?.user_id ?? me?.teacher_id ?? null))
+            .catch(() => setTeacherUserId(null));
+    }, [isTeacher]);
 
     const load = () => {
         schedulesApi.list().then(setSchedules).catch(() => { });
@@ -715,8 +769,9 @@ export default function SchedulePage({ role = 'admin' }: { role?: 'admin' | 'tea
     useEffect(() => { load(); }, []);
 
     const handleSubmit = async () => {
-        if (editingSchedule?.id) {
-            await schedulesApi.update(editingSchedule.id, form);
+        const editing = !!editingSchedule?.id;
+        if (editing) {
+            await schedulesApi.update(editingSchedule!.id!, form);
         } else {
             await schedulesApi.create(form);
         }
@@ -724,6 +779,7 @@ export default function SchedulePage({ role = 'admin' }: { role?: 'admin' | 'tea
         setEditingSchedule(null);
         setForm({ ...emptyForm });
         load();
+        toast.success(editing ? 'Schedule updated' : 'Schedule created');
     };
 
     const openEdit = (schedule: Schedule) => {
@@ -749,9 +805,15 @@ export default function SchedulePage({ role = 'admin' }: { role?: 'admin' | 'tea
     };
 
     const handleDelete = async (id: string) => {
-        if (confirm('Delete this schedule?')) {
+        const ok = await confirmDialog({
+            title: 'Delete schedule?',
+            message: 'This schedule and its enrollments will be removed.',
+            confirmLabel: 'Delete',
+        });
+        if (ok) {
             await schedulesApi.delete(id);
             load();
+            toast.success('Schedule deleted');
         }
     };
 
@@ -787,13 +849,18 @@ export default function SchedulePage({ role = 'admin' }: { role?: 'admin' | 'tea
         setExpandedScheduleId(prev => prev === id ? null : id);
     };
 
+    // Teachers only see schedules they are attached to
+    const visibleSchedules = isTeacher
+        ? schedules.filter(s => !!s.teacher_id && s.teacher_id === teacherUserId)
+        : schedules;
+
     return (
         <div>
             <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-3">
                     <Clock size={20} style={{ color: 'var(--text-accent)' }} />
                     <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
-                        {schedules.length} schedule{schedules.length !== 1 ? 's' : ''} configured
+                        {visibleSchedules.length} schedule{visibleSchedules.length !== 1 ? 's' : ''} configured
                     </span>
                 </div>
                 {!isTeacher && (
@@ -805,15 +872,15 @@ export default function SchedulePage({ role = 'admin' }: { role?: 'admin' | 'tea
 
             {/* Schedule Cards */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 16, marginBottom: 32 }}>
-                {schedules.map(schedule => {
+                {visibleSchedules.map(schedule => {
                     const enrolled = getEnrolledNames(schedule);
                     const isExpanded = expandedScheduleId === schedule.id;
                     return (
-                        <div key={schedule.id} className="card" style={isExpanded ? { gridColumn: '1 / -1' } : {}}>
-                            <div className="card-header" style={{ gap: 8, minWidth: 0 }}>
-                                <div className="card-title" style={{ flex: 1, minWidth: 0 }}>
+                        <div key={schedule.id} className="card" style={isExpanded ? { gridColumn: '1 / -1', overflow: 'visible' } : { overflow: 'visible' }}>
+                            <div className="card-header" style={{ gap: 8, minWidth: 0, overflow: 'visible' }}>
+                                <div className="card-title" style={{ flex: 1, minWidth: 0, flexWrap: 'wrap', overflow: 'visible' }}>
                                     <span className={`status-dot ${schedule.active ? 'online' : 'offline'}`} style={{ flexShrink: 0 }} />
-                                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    <span style={{ wordBreak: 'break-word' }}>
                                         {schedule.name}
                                     </span>
                                     {getRoomName(schedule.room_id) && (
@@ -822,37 +889,40 @@ export default function SchedulePage({ role = 'admin' }: { role?: 'admin' | 'tea
                                             {getRoomName(schedule.room_id)}
                                         </span>
                                     )}
-                                    {getTeacherName(schedule.teacher_id) && (
-                                        <span className="badge badge-info" style={{ flexShrink: 0, fontSize: 10 }}>
-                                            <Users size={10} style={{ marginRight: 3 }} />
-                                            {getTeacherName(schedule.teacher_id)}
-                                        </span>
-                                    )}
                                 </div>
-                                <div className="flex gap-2" style={{ flexShrink: 0 }}>
-                                    <button
-                                        className={`btn ${isExpanded ? 'btn-primary' : 'btn-ghost'} btn-sm`}
-                                        onClick={() => toggleWeeklyView(schedule.id!)}
-                                        title="Weekly View"
-                                    >
-                                        <Clock size={14} />
-                                    </button>
+                                <div style={{ position: 'relative', flexShrink: 0 }}>
                                     <button
                                         className="btn btn-ghost btn-sm"
-                                        onClick={() => setAttendanceSchedule(schedule)}
-                                        title="View Attendance"
+                                        onClick={(e) => { e.stopPropagation(); setMenuOpenId(menuOpenId === schedule.id ? null : schedule.id!); }}
+                                        title="Actions"
+                                        aria-haspopup="menu"
+                                        aria-expanded={menuOpenId === schedule.id}
                                     >
-                                        <ClipboardList size={14} />
+                                        <MoreVertical size={16} />
                                     </button>
-                                    {!isTeacher && (
-                                        <>
-                                            <button className="btn btn-ghost btn-sm" onClick={() => openEdit(schedule)} title="Edit">
-                                                <Pencil size={14} />
+                                    {menuOpenId === schedule.id && (
+                                        <div className="card-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+                                            <button className="card-menu-item" role="menuitem"
+                                                onClick={() => { setMenuOpenId(null); toggleWeeklyView(schedule.id!); }}>
+                                                <Clock size={14} /> {isExpanded ? 'Hide weekly view' : 'Weekly view'}
                                             </button>
-                                            <button className="btn btn-ghost btn-sm" onClick={() => handleDelete(schedule.id!)} title="Delete">
-                                                <Trash2 size={14} />
+                                            <button className="card-menu-item" role="menuitem"
+                                                onClick={() => { setMenuOpenId(null); setAttendanceSchedule(schedule); }}>
+                                                <ClipboardList size={14} /> View attendance
                                             </button>
-                                        </>
+                                            {!isTeacher && (
+                                                <>
+                                                    <button className="card-menu-item" role="menuitem"
+                                                        onClick={() => { setMenuOpenId(null); openEdit(schedule); }}>
+                                                        <Pencil size={14} /> Edit
+                                                    </button>
+                                                    <button className="card-menu-item danger" role="menuitem"
+                                                        onClick={() => { setMenuOpenId(null); handleDelete(schedule.id!); }}>
+                                                        <Trash2 size={14} /> Delete
+                                                    </button>
+                                                </>
+                                            )}
+                                        </div>
                                     )}
                                 </div>
                             </div>

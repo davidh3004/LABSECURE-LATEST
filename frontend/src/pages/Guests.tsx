@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react';
 import { UserPlus, X, Clock, Ban, Camera, Loader2 } from 'lucide-react';
 import FaceCapture from '../components/FaceCapture';
 import { guestsApi, usersApi } from '../api/client';
+import { confirmDialog } from '../components/ui/ConfirmDialog';
+import { toast } from '../components/ui/Toast';
 import type { Guest, GuestCreate, User } from '../api/types';
 
 export default function GuestsPage() {
@@ -27,6 +29,7 @@ export default function GuestsPage() {
         setShowModal(false);
         setForm({ name: '', purpose: '', sponsor_id: '', valid_from: '', valid_until: '' });
         load();
+        toast.success('Guest created');
         // Automatically open face enrollment for the newly created guest
         if (newGuest?.id) {
             setEnrollGuestId(newGuest.id);
@@ -34,9 +37,15 @@ export default function GuestsPage() {
     };
 
     const handleRevoke = async (id: string) => {
-        if (confirm('Revoke this guest\'s access?')) {
+        const ok = await confirmDialog({
+            title: 'Revoke guest access?',
+            message: 'This guest will immediately lose access to all areas.',
+            confirmLabel: 'Revoke',
+        });
+        if (ok) {
             await guestsApi.revoke(id);
             load();
+            toast.success('Guest access revoked');
         }
     };
 
@@ -190,8 +199,10 @@ export default function GuestsPage() {
                                 onCapture={async (photo, _descriptor) => {
                                     try {
                                         await guestsApi.enrollFace(enrollGuestId, photo);
+                                        toast.success('Face enrolled');
                                     } catch (err) {
                                         console.error('Enrollment failed:', err);
+                                        toast.error('Face enrollment failed');
                                     }
                                     setEnrollGuestId(null);
                                     load();

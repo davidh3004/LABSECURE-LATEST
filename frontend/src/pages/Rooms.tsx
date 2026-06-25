@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react';
 import { Plus, Pencil, Trash2, X, DoorOpen, Camera, Calendar } from 'lucide-react';
 import { roomsApi, camerasApi, schedulesApi } from '../api/client';
+import { confirmDialog } from '../components/ui/ConfirmDialog';
+import { toast } from '../components/ui/Toast';
 import type { Room, RoomCreate, CameraConfig, Schedule } from '../api/types';
 
 export default function RoomsPage() {
@@ -35,19 +37,27 @@ export default function RoomsPage() {
 
     const handleSubmit = async () => {
         if (!form.name.trim()) return;
-        if (editingRoom?.id) {
-            await roomsApi.update(editingRoom.id, form);
+        const editing = !!editingRoom?.id;
+        if (editing) {
+            await roomsApi.update(editingRoom!.id!, form);
         } else {
             await roomsApi.create(form);
         }
         setShowForm(false);
         load();
+        toast.success(editing ? 'Room updated' : 'Room created');
     };
 
     const handleDelete = async (id: string) => {
-        if (!confirm('Delete this room?')) return;
+        const ok = await confirmDialog({
+            title: 'Delete room?',
+            message: 'This room will be removed. Cameras and schedules tied to it will be unassigned.',
+            confirmLabel: 'Delete',
+        });
+        if (!ok) return;
         await roomsApi.delete(id);
         load();
+        toast.success('Room deleted');
     };
 
     const getCamerasForRoom = (roomId?: string) =>

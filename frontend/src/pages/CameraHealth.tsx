@@ -1,8 +1,10 @@
 /* CameraHealth.tsx — Camera Management with Add/Delete + Health Monitoring */
 
 import { useState, useEffect } from 'react';
-import { Camera, Wifi, WifiOff, Activity, Server, RefreshCw, Plus, Trash2, X, DoorOpen, Pencil } from 'lucide-react';
+import { Camera, Wifi, WifiOff, Server, RefreshCw, Plus, Trash2, X, DoorOpen, Pencil, Eye, MoreVertical } from 'lucide-react';
 import { camerasApi, roomsApi } from '../api/client';
+import { confirmDialog } from '../components/ui/ConfirmDialog';
+import { toast } from '../components/ui/Toast';
 import type { HealthResponse, CameraConfig, Room } from '../api/types';
 
 export default function CameraHealthPage() {
@@ -12,6 +14,8 @@ export default function CameraHealthPage() {
     const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
     const [showAddModal, setShowAddModal] = useState(false);
     const [editCam, setEditCam] = useState<CameraConfig | null>(null);
+    const [detailCam, setDetailCam] = useState<CameraConfig | null>(null);
+    const [menuOpen, setMenuOpen] = useState<string | null>(null);
     const [editForm, setEditForm] = useState({ name: '', ip: '', room_id: '' });
     const [newCam, setNewCam] = useState({ name: '', type: 'webcam' as 'ip' | 'webcam', ip: '', room_id: '' });
 
@@ -27,13 +31,18 @@ export default function CameraHealthPage() {
         return () => clearInterval(interval);
     }, []);
 
+    // Close the card action menu on any outside click
+    useEffect(() => {
+        const close = () => setMenuOpen(null);
+        window.addEventListener('click', close);
+        return () => window.removeEventListener('click', close);
+    }, []);
+
     const getCameraHealth = (camId: string) =>
         health?.cameras?.find(c => c.camera_id === camId);
 
     const getNetworkHealth = (camId: string) =>
         health?.network?.[camId];
-
-    const switchHealth = health?.network?.['switch'];
 
     const handleAddCamera = async () => {
         try {
@@ -46,15 +55,23 @@ export default function CameraHealthPage() {
             setShowAddModal(false);
             setNewCam({ name: '', type: 'webcam', ip: '', room_id: '' });
             load();
+            toast.success('Camera added');
         } catch (err) {
             console.error('Failed to add camera:', err);
+            toast.error('Failed to add camera');
         }
     };
 
     const handleDeleteCamera = async (id: string) => {
-        if (confirm('Delete this camera?')) {
+        const ok = await confirmDialog({
+            title: 'Delete camera?',
+            message: 'This camera will be removed from monitoring. This action cannot be undone.',
+            confirmLabel: 'Delete',
+        });
+        if (ok) {
             await camerasApi.delete(id);
             load();
+            toast.success('Camera deleted');
         }
     };
 
@@ -72,6 +89,7 @@ export default function CameraHealthPage() {
         } as any);
         setEditCam(null);
         load();
+        toast.success('Camera updated');
     };
 
     return (
@@ -92,36 +110,6 @@ export default function CameraHealthPage() {
                     <button className="btn btn-primary btn-sm" onClick={() => setShowAddModal(true)}>
                         <Plus size={14} /> Add Camera
                     </button>
-                </div>
-            </div>
-
-            {/* Switch Status */}
-            <div className="card mb-6">
-                <div className="card-header">
-                    <div className="card-title">
-                        <Server size={16} />
-                        Cisco Catalyst Switch
-                    </div>
-                    {switchHealth && (
-                        <span className={`badge ${switchHealth.reachable ? 'badge-success' : 'badge-danger'}`}>
-                            <span className={`status-dot ${switchHealth.reachable ? 'online' : 'offline'}`} />
-                            {switchHealth.reachable ? 'Online' : 'Unreachable'}
-                        </span>
-                    )}
-                </div>
-                <div className="card-body">
-                    <div className="health-metrics">
-                        <div className="health-metric">
-                            <div className="health-metric-label">IP Address</div>
-                            <div className="health-metric-value">{switchHealth?.ip || '—'}</div>
-                        </div>
-                        <div className="health-metric">
-                            <div className="health-metric-label">Latency</div>
-                            <div className="health-metric-value">
-                                {switchHealth?.latency_ms != null ? `${switchHealth.latency_ms}ms` : '—'}
-                            </div>
-                        </div>
-                    </div>
                 </div>
             </div>
 
@@ -149,9 +137,15 @@ export default function CameraHealthPage() {
                     const connected = camHealth?.connected || false;
 
                     return (
-                        <div key={cam.id} className="health-card">
-                            <div className="health-card-header">
-                                <div className="flex items-center gap-3" style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+                        <div
+                            key={cam.id}
+                            className="health-card"
+                            onClick={() => setDetailCam(cam)}
+                            style={{ cursor: 'pointer', overflow: 'visible' }}
+                            title="View details"
+                        >
+                            <div className="health-card-header" style={{ overflow: 'visible' }}>
+                                <div className="flex items-center gap-3" style={{ flex: 1, minWidth: 0 }}>
                                     <div style={{
                                         width: 40, height: 40, borderRadius: 'var(--radius-md)',
                                         background: connected ? 'var(--color-success-bg)' : 'var(--color-danger-bg)',
@@ -161,36 +155,47 @@ export default function CameraHealthPage() {
                                         {connected ? <Wifi size={20} style={{ color: 'var(--color-success)' }} /> :
                                             <WifiOff size={20} style={{ color: 'var(--color-danger)' }} />}
                                     </div>
-                                    <div style={{ minWidth: 0, overflow: 'hidden' }}>
-                                        <div className="health-device-name">{cam.name}</div>
-                                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    <div style={{ minWidth: 0 }}>
+                                        <div className="health-device-name" style={{ overflow: 'visible', textOverflow: 'clip', whiteSpace: 'normal', wordBreak: 'break-word' }}>{cam.name}</div>
+                                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', wordBreak: 'break-all' }}>
                                             {cam.type === 'webcam' ? 'Local Device' : cam.ip || 'IP Camera'}
-                                            {cam.room_id && (() => {
-                                                const room = rooms.find(r => r.id === cam.room_id);
-                                                return room ? <span> · <DoorOpen size={10} style={{ verticalAlign: '-1px' }} /> {room.name}</span> : null;
-                                            })()}
                                         </div>
+                                        {cam.room_id && (() => {
+                                            const room = rooms.find(r => r.id === cam.room_id);
+                                            return room ? (
+                                                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                                    <DoorOpen size={10} style={{ flexShrink: 0 }} /> {room.name}
+                                                </div>
+                                            ) : null;
+                                        })()}
                                     </div>
                                 </div>
-                                <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
-                                    <span className={`badge ${connected ? 'badge-success' : 'badge-danger'}`}>
-                                        {connected ? 'Online' : 'Offline'}
-                                    </span>
+                                <div style={{ position: 'relative', flexShrink: 0 }}>
                                     <button
                                         className="btn btn-ghost btn-sm"
-                                        onClick={() => openEditCamera(cam)}
-                                        title="Edit camera"
+                                        onClick={(e) => { e.stopPropagation(); setMenuOpen(menuOpen === cam.id ? null : cam.id); }}
+                                        title="Actions"
+                                        aria-haspopup="menu"
+                                        aria-expanded={menuOpen === cam.id}
                                     >
-                                        <Pencil size={14} />
+                                        <MoreVertical size={16} />
                                     </button>
-                                    <button
-                                        className="btn btn-ghost btn-sm"
-                                        onClick={() => handleDeleteCamera(cam.id)}
-                                        title="Delete camera"
-                                        style={{ color: 'var(--color-danger)' }}
-                                    >
-                                        <Trash2 size={14} />
-                                    </button>
+                                    {menuOpen === cam.id && (
+                                        <div className="card-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+                                            <button className="card-menu-item" role="menuitem"
+                                                onClick={() => { setMenuOpen(null); setDetailCam(cam); }}>
+                                                <Eye size={14} /> View details
+                                            </button>
+                                            <button className="card-menu-item" role="menuitem"
+                                                onClick={() => { setMenuOpen(null); openEditCamera(cam); }}>
+                                                <Pencil size={14} /> Edit
+                                            </button>
+                                            <button className="card-menu-item danger" role="menuitem"
+                                                onClick={() => { setMenuOpen(null); handleDeleteCamera(cam.id); }}>
+                                                <Trash2 size={14} /> Delete
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
 
@@ -207,7 +212,7 @@ export default function CameraHealthPage() {
                                 <div className="health-metric">
                                     <div className="health-metric-label">Network Latency</div>
                                     <div className="health-metric-value">
-                                        {netHealth?.latency_ms != null ? `${netHealth.latency_ms}ms` : '—'}
+                                        {netHealth?.latency_ms != null ? `${netHealth.latency_ms.toFixed(1)}ms` : '—'}
                                     </div>
                                 </div>
                                 <div className="health-metric">
@@ -233,6 +238,90 @@ export default function CameraHealthPage() {
                     );
                 })}
             </div>
+
+            {/* Camera Detail Modal */}
+            {detailCam && (() => {
+                const camHealth = getCameraHealth(detailCam.id);
+                const netHealth = getNetworkHealth(detailCam.id);
+                const connected = camHealth?.connected || false;
+                const room = detailCam.room_id ? rooms.find(r => r.id === detailCam.room_id) : null;
+                const fmtTime = (v?: string | number) => {
+                    if (v == null) return '—';
+                    const ms = typeof v === 'number' ? (v < 1e12 ? v * 1000 : v) : Date.parse(v);
+                    return isNaN(ms) ? String(v) : new Date(ms).toLocaleString();
+                };
+                const rows: { label: string; value: React.ReactNode }[] = [
+                    { label: 'Camera ID', value: <span style={{ fontFamily: 'var(--font-mono, monospace)' }}>{detailCam.id}</span> },
+                    { label: 'Type', value: detailCam.type === 'webcam' ? 'Webcam (Local Device)' : 'IP Camera (RTSP/Network)' },
+                    { label: 'Source', value: detailCam.type === 'webcam' ? 'Local Device' : (detailCam.ip || '—') },
+                    { label: 'Room', value: room ? `${room.name}${room.floor ? ` · ${room.floor}` : ''}` : 'No room assigned' },
+                    { label: 'Enabled', value: detailCam.enabled ? 'Yes' : 'No' },
+                    { label: 'FPS', value: camHealth?.fps != null ? String(camHealth.fps) : '—' },
+                    { label: 'Last Frame', value: fmtTime(camHealth?.last_frame_time) },
+                    { label: 'Network IP', value: netHealth?.ip || '—' },
+                    {
+                        label: 'Network Latency',
+                        value: netHealth?.latency_ms != null ? `${netHealth.latency_ms.toFixed(2)}ms` : '—',
+                    },
+                    { label: 'Last Network Check', value: fmtTime(netHealth?.last_check) },
+                ];
+                return (
+                    <div className="modal-overlay" onClick={() => setDetailCam(null)}>
+                        <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
+                            <div className="modal-header">
+                                <div className="flex items-center gap-3" style={{ minWidth: 0 }}>
+                                    <div style={{
+                                        width: 36, height: 36, borderRadius: 'var(--radius-md)',
+                                        background: connected ? 'var(--color-success-bg)' : 'var(--color-danger-bg)',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                                    }}>
+                                        {connected ? <Wifi size={18} style={{ color: 'var(--color-success)' }} /> :
+                                            <WifiOff size={18} style={{ color: 'var(--color-danger)' }} />}
+                                    </div>
+                                    <h2 className="modal-title" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                        {detailCam.name}
+                                    </h2>
+                                </div>
+                                <button className="btn btn-ghost" onClick={() => setDetailCam(null)}><X size={18} /></button>
+                            </div>
+                            <div className="modal-body">
+                                <div className="flex items-center gap-2 mb-4">
+                                    <span className={`badge ${connected ? 'badge-success' : 'badge-danger'}`}>
+                                        <span className={`status-dot ${connected ? 'online' : 'offline'}`} />
+                                        {connected ? 'Online' : 'Offline'}
+                                    </span>
+                                    {netHealth ? (
+                                        <span className={`badge ${netHealth.reachable ? 'badge-success' : 'badge-danger'}`}>
+                                            {netHealth.reachable ? 'Network Reachable' : 'Network Down'}
+                                        </span>
+                                    ) : (
+                                        <span className="badge badge-neutral">Network N/A</span>
+                                    )}
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                    {rows.map(row => (
+                                        <div
+                                            key={row.label}
+                                            className="flex items-center justify-between gap-4"
+                                            style={{
+                                                padding: '10px 0',
+                                                borderBottom: '1px solid var(--border-secondary)',
+                                            }}
+                                        >
+                                            <span style={{ fontSize: 12, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', flexShrink: 0 }}>
+                                                {row.label}
+                                            </span>
+                                            <span style={{ fontSize: 13, color: 'var(--text-primary)', textAlign: 'right', wordBreak: 'break-all' }}>
+                                                {row.value}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
 
             {/* Add Camera Modal */}
             {showAddModal && (

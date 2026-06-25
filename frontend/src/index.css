@@ -968,6 +968,210 @@ tr:last-child td {
   border-color: var(--border-accent);
 }
 
+/* ── Card Kebab Menu ──────────────────────────────────── */
+.card-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 168px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-secondary);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: 4px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.card-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.card-menu-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.card-menu-item.danger {
+  color: var(--color-danger);
+}
+
+.card-menu-item.danger:hover {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+/* ── Confirm Dialog ───────────────────────────────────── */
+.confirm-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  margin: 0 auto 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.confirm-icon.danger {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+.confirm-icon.info {
+  background: var(--color-info-bg);
+  color: var(--color-info);
+}
+
+.confirm-title {
+  margin: 0 0 6px;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.confirm-message {
+  margin: 0 auto;
+  max-width: 320px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+/* ── Toasts ───────────────────────────────────────────── */
+.toast-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 360px;
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-secondary);
+  border-left: 3px solid var(--text-tertiary);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-primary);
+  font-size: 13px;
+  pointer-events: auto;
+  animation: toast-in 0.22s ease-out;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation: none; }
+}
+
+.toast-icon { flex-shrink: 0; }
+.toast-message { flex: 1; line-height: 1.4; }
+
+.toast-close {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  border-radius: var(--radius-sm);
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.toast-close:hover { color: var(--text-primary); background: var(--bg-hover); }
+
+.toast-success { border-left-color: var(--color-success); }
+.toast-success .toast-icon { color: var(--color-success); }
+.toast-error { border-left-color: var(--color-danger); }
+.toast-error .toast-icon { color: var(--color-danger); }
+.toast-info { border-left-color: var(--color-info); }
+.toast-info .toast-icon { color: var(--color-info); }
+
+/* ── Session Dropdown (attendance) ────────────────────── */
+.session-select {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.session-select:hover:not(:disabled) { border-color: var(--border-accent); }
+.session-select:disabled { cursor: default; opacity: 0.7; }
+
+.session-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 50;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-secondary);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.session-menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease;
+}
+.session-menu-item:hover { background: var(--bg-hover); }
+.session-menu-item.active {
+  background: var(--color-info-bg);
+  box-shadow: inset 3px 0 0 var(--color-info);
+}
+
+
 .health-card-header {
   display: flex;
   align-items: center;

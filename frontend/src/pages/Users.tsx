@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react';
 import { Plus, Pencil, Trash2, Search, Camera, X, Loader2 } from 'lucide-react';
 import FaceCapture from '../components/FaceCapture';
 import { usersApi } from '../api/client';
+import { confirmDialog } from '../components/ui/ConfirmDialog';
+import { toast } from '../components/ui/Toast';
 import type { User, UserCreate, UserRole } from '../api/types';
 
 const ROLES: UserRole[] = ['student', 'teacher', 'employee', 'janitor', 'security', 'admin'];
@@ -54,6 +56,7 @@ export default function UsersPage() {
             await usersApi.update(editing.id, form);
             setShowModal(false);
             load();
+            toast.success('User updated');
         } else {
             // Create user, then move to face capture
             const newUser = await usersApi.create(form);
@@ -67,8 +70,10 @@ export default function UsersPage() {
         setEnrolling(true);
         try {
             await usersApi.enrollFace(createdUserId, photo);
+            toast.success('User created and face enrolled');
         } catch (err) {
             console.error('Face enrollment failed:', err);
+            toast.error('Face enrollment failed');
         }
         setEnrolling(false);
         setShowModal(false);
@@ -84,22 +89,29 @@ export default function UsersPage() {
     const [enrollUserId, setEnrollUserId] = useState<string | null>(null);
 
     const handleDelete = async (id: string) => {
-        if (confirm('Are you sure you want to delete this user?')) {
+        const ok = await confirmDialog({
+            title: 'Delete user?',
+            message: 'This user and their enrolled face data will be permanently deleted.',
+            confirmLabel: 'Delete',
+        });
+        if (ok) {
             await usersApi.delete(id);
             load();
+            toast.success('User deleted');
         }
     };
 
     return (
         <div>
-            <div className="flex items-center justify-between mb-6">
-                <div className="flex gap-3">
-                    <div className="search-box">
+            <div className="flex items-start justify-between mb-6" style={{ gap: 16 }}>
+                <div className="flex flex-col gap-3" style={{ flex: 1, maxWidth: 440 }}>
+                    <div className="search-box" style={{ width: '100%' }}>
                         <Search />
                         <input className="form-input" placeholder="Search users..." value={search}
                             onChange={e => setSearch(e.target.value)} />
                     </div>
-                    <select className="form-select" value={roleFilter} onChange={e => setRoleFilter(e.target.value)}>
+                    <select className="form-select" style={{ width: '100%', maxWidth: 240 }}
+                        value={roleFilter} onChange={e => setRoleFilter(e.target.value)}>
                         <option value="">All Roles</option>
                         {ROLES.map(r => <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>)}
                     </select>
@@ -265,8 +277,10 @@ export default function UsersPage() {
                                 onCapture={async (photo, _descriptor) => {
                                     try {
                                         await usersApi.enrollFace(enrollUserId, photo);
+                                        toast.success('Face enrolled');
                                     } catch (err) {
                                         console.error('Enrollment failed:', err);
+                                        toast.error('Face enrollment failed');
                                     }
                                     setEnrollUserId(null);
                                     load();

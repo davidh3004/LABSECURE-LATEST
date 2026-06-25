@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { ShieldAlert, ShieldOff, AlertTriangle, Clock, User } from 'lucide-react';
 import { emergencyApi } from '../api/client';
+import { toast } from '../components/ui/Toast';
 import type { SystemState } from '../api/types';
 
 export default function EmergencyPage() {
@@ -18,6 +19,7 @@ export default function EmergencyPage() {
         try {
             await emergencyApi.activate('admin');
             load();
+            toast.success('Emergency lockdown activated');
         } finally {
             setLoading(false);
             setConfirmAction(null);
@@ -29,6 +31,7 @@ export default function EmergencyPage() {
         try {
             await emergencyApi.deactivate('admin');
             load();
+            toast.success('Emergency lockdown lifted');
         } finally {
             setLoading(false);
             setConfirmAction(null);
