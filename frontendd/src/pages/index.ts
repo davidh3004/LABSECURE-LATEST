@@ -1,0 +1,13 @@
+export { default as Dashboard } from './Dashboard';
+export { default as InsightsDashboard } from './InsightsDashboard';
+export { default as UsersPage } from './Users';
+export { default as SchedulePage } from './Schedule';
+export { default as PermissionsPage } from './Permissions';
+export { default as EventsPage } from './Events';
+export { default as GuestsPage } from './Guests';
+export { default as CameraHealthPage } from './CameraHealth';
+export { default as EmergencyPage } from './Emergency';
+export { default as RoomsPage } from './Rooms';
+export { default as LoginPage } from './LoginPage';
+export { default as AdminsPage } from './AdminsPage';
+export { default as DoorSimulationPage } from './DoorSimulation';

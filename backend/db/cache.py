@@ -73,13 +73,13 @@ def get_cache() -> TTLCache:
 
 # ── Default TTLs (seconds) ────────────────────────────────
 CACHE_TTL = {
-    "system_state": 10,     # Emergency lockdown needs fast detection
-    "schedules": 60,        # Rarely change
-    "permissions": 60,      # Rarely change
-    "users": 30,            # Moderate change frequency
-    "cameras": 30,          # Moderate change frequency
-    "rooms": 60,            # Rarely change
-    "guests": 30,           # Moderate change frequency
-    "admins": 60,           # Rarely change
-    "events_query": 10,     # Short TTL for event queries (auto-refresh pages)
+    "system_state": 30,     # Short TTL, but invalidates instantly on emergency trigger
+    "schedules": 600,       # Rarely change (10 minutes)
+    "permissions": 600,     # Rarely change (10 minutes)
+    "users": 600,           # Cache for 10 minutes (invalidates on write)
+    "cameras": 600,         # Cache for 10 minutes (invalidates on write)
+    "rooms": 600,           # Rarely change (10 minutes)
+    "guests": 300,          # Moderate change frequency (5 minutes)
+    "admins": 600,          # Rarely change (10 minutes)
+    "events_query": 60,     # Prevent excessive event query spam from polling (1 minute)
 }

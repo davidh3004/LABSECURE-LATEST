@@ -596,24 +596,41 @@ class EventRepository:
             return cached
 
         db = get_firestore()
-        ref = db.collection(EventRepository.COLLECTION).order_by("timestamp", direction="DESCENDING").limit(2000)
+        
+        # Check if we have any equality filters.
+        # If we do, we apply them in Firestore but avoid sorting/ordering on timestamp in Firestore
+        # because that would require composite indexes. Instead, we sort in Python.
+        has_equality_filters = any([event_type, severity, camera_id, user_id])
+        
+        ref = db.collection(EventRepository.COLLECTION)
+        
+        if event_type:
+            ref = ref.where(filter=FieldFilter("type", "==", event_type))
+        if severity:
+            ref = ref.where(filter=FieldFilter("severity", "==", severity))
+        if camera_id:
+            ref = ref.where(filter=FieldFilter("camera_id", "==", camera_id))
+        if user_id:
+            ref = ref.where(filter=FieldFilter("user_id", "==", user_id))
+            
+        if not has_equality_filters:
+            # If no equality filters are present, we can safely sort by timestamp and limit in Firestore
+            # using default single-field indexes without needing composite indexes.
+            # If there's a date range filter (from_time/to_time), we retrieve up to 2000 so we can filter in-memory.
+            # Otherwise, we limit exactly to what's requested (offset + limit) to minimize read operations.
+            has_range_filters = any([from_time, to_time])
+            query_limit = 2000 if has_range_filters else (offset + limit)
+            ref = ref.order_by("timestamp", direction="DESCENDING").limit(query_limit)
+        else:
+            # With equality filters, retrieve up to 2000 matching documents.
+            # We will sort and filter them by timestamp in Python.
+            ref = ref.limit(2000)
+
         docs = ref.stream()
 
         results = []
         for doc in docs:
             data_dict = doc.to_dict()
-
-            if event_type and data_dict.get("type") != event_type:
-                continue
-
-            if severity and data_dict.get("severity") != severity:
-                continue
-
-            if camera_id and data_dict.get("camera_id") != camera_id:
-                continue
-
-            if user_id and data_dict.get("user_id") != user_id:
-                continue
 
             ts = data_dict.get("timestamp")
             if ts:
@@ -629,6 +646,10 @@ class EventRepository:
                         continue
 
             results.append(EventModel(id=doc.id, **data_dict))
+
+        # If we had equality filters, they weren't ordered in Firestore, so sort them in Python
+        if has_equality_filters:
+            results.sort(key=lambda x: x.timestamp or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
 
         paginated_result = results[offset : offset + limit]
         cache.set(cache_key, paginated_result, CACHE_TTL["events_query"])

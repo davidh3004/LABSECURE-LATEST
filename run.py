@@ -35,8 +35,8 @@ if sys.platform == "win32":
             if py_launcher:
                 print("[INFO] Re-invoking using Python 3.11 launcher...")
                 os.environ["FORCE_PY311_RESTART"] = "1"
-                # Restart the current script with py -3.11
-                subprocess.call([py_launcher, "-3.11", __file__])
+                # Replace the current process image to avoid nested launcher shell wrappers (quote path for spaces)
+                os.execv(py_launcher, [py_launcher, "-3.11", f'"{__file__}"'])
                 sys.exit(0)
 
 # ── Configuration ──────────────────────────────────────────
