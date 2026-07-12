@@ -6,15 +6,16 @@ import {
     Activity, Camera, Clock, TrendingUp, Wifi, WifiOff,
 } from 'lucide-react';
 import { eventsApi, camerasApi } from '../api/client';
-import type { SystemEvent, EventStats, CameraHealth } from '../api/types';
+import type { SystemEvent, EventStats, CameraHealth, CameraConfig } from '../api/types';
 
 // ── Bar Chart ──────────────────────────────────────────────────────────
 function BarChart({ data }: { data: { label: string; value: number; color: string }[] }) {
     const max = Math.max(...data.map(d => d.value), 1);
     return (
-        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 150, paddingTop: 8 }}>
+        <div className="bar-chart-scroll">
+            <div className="bar-chart-inner">
             {data.map(({ label, value, color }) => (
-                <div key={label} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                <div key={label} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, minWidth: 40 }}>
                     <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600, minHeight: 16 }}>
                         {value > 0 ? value : ''}
                     </span>
@@ -34,6 +35,7 @@ function BarChart({ data }: { data: { label: string; value: number; color: strin
                     </span>
                 </div>
             ))}
+            </div>
         </div>
     );
 }
@@ -53,7 +55,7 @@ function DonutChart({ segments }: { segments: { label: string; value: number; co
     });
 
     return (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
+        <div className="insights-donut-wrap">
             <svg width={120} height={120} style={{ flexShrink: 0 }}>
                 <g transform="rotate(-90 60 60)">
                     {total === 0
@@ -135,7 +137,28 @@ export default function InsightsDashboard() {
     const load = () => {
         eventsApi.stats().then(setStats).catch(() => {});
         eventsApi.list({ limit: 10 }).then(setRecent).catch(() => {});
-        camerasApi.health().then(h => setCameras(h.cameras)).catch(() => {});
+        Promise.all([camerasApi.list(), camerasApi.health()])
+            .then(([list, health]) => {
+                const healthById = new Map(health.cameras.map(h => [h.camera_id, h]));
+                const merged: CameraHealth[] = list.map((cam: CameraConfig) => {
+                    const h = healthById.get(cam.id);
+                    return {
+                        camera_id: cam.id,
+                        name: cam.name,
+                        type: cam.type,
+                        connected: h?.connected ?? false,
+                        fps: h?.fps ?? 0,
+                        last_frame_time: h?.last_frame_time,
+                    };
+                });
+                for (const h of health.cameras) {
+                    if (!merged.some(c => c.camera_id === h.camera_id)) {
+                        merged.push(h);
+                    }
+                }
+                setCameras(merged);
+            })
+            .catch(() => {});
     };
 
     useEffect(() => {
@@ -153,18 +176,18 @@ export default function InsightsDashboard() {
     const incidents = bs.critical || 0;
 
     const barData = [
-        { label: 'Access Granted', value: accessGranted, color: 'var(--color-success)' },
-        { label: 'Access Denied', value: accessDenied, color: 'var(--color-danger)' },
-        { label: 'Unknown Face', value: unknownFaces, color: 'var(--color-warning)' },
+        { label: 'Granted', value: accessGranted, color: 'var(--color-success)' },
+        { label: 'Denied', value: accessDenied, color: 'var(--color-danger)' },
+        { label: 'Unknown', value: unknownFaces, color: 'var(--color-warning)' },
         { label: 'Anomaly', value: bt.anomaly_alert || 0, color: '#8b5cf6' },
         { label: 'Emergency', value: (bt.emergency_lock || 0) + (bt.emergency_unlock || 0), color: '#ef4444' },
         { label: 'Guests', value: (bt.guest_registered || 0) + (bt.guest_revoked || 0), color: '#06b6d4' },
     ];
 
     const donutData = [
-        { label: 'Access Granted', value: accessGranted, color: 'var(--color-success)' },
-        { label: 'Access Denied', value: accessDenied, color: 'var(--color-danger)' },
-        { label: 'Unknown Face', value: unknownFaces, color: 'var(--color-warning)' },
+        { label: 'Granted', value: accessGranted, color: 'var(--color-success)' },
+        { label: 'Denied', value: accessDenied, color: 'var(--color-danger)' },
+        { label: 'Unknown', value: unknownFaces, color: 'var(--color-warning)' },
     ];
 
     const connectedCameras = cameras.filter(c => c.connected).length;
@@ -223,7 +246,7 @@ export default function InsightsDashboard() {
             </div>
 
             {/* ── Charts Row ── */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+            <div className="charts-grid-row">
 
                 {/* Donut — Access Breakdown */}
                 <div className="card">
@@ -253,7 +276,7 @@ export default function InsightsDashboard() {
             </div>
 
             {/* ── Bottom Row ── */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 20 }}>
+            <div className="bottom-grid-row">
 
                 {/* Recent Activity */}
                 <div className="card">

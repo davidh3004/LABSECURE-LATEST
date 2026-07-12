@@ -19,8 +19,46 @@ const dayColors: Record<string, string> = {
 
 const emptyForm: ScheduleCreate = {
     name: '', days: [], start_time: '08:00', end_time: '18:00',
+    day_times: {},
     roles: [], user_overrides: [], teacher_id: undefined, active: true,
 };
+
+/** Resolve hours for a specific day (per-day override or global fallback). */
+function getDayWindow(schedule: Pick<Schedule, 'start_time' | 'end_time' | 'day_times'>, day: string) {
+    const w = schedule.day_times?.[day];
+    if (w?.start_time && w?.end_time) return w;
+    return { start_time: schedule.start_time, end_time: schedule.end_time };
+}
+
+function formatScheduleHours(schedule: Schedule): string {
+    if (!schedule.days.length) return `${schedule.start_time} — ${schedule.end_time}`;
+    const windows = schedule.days.map(d => {
+        const w = getDayWindow(schedule, d);
+        return `${w.start_time}-${w.end_time}`;
+    });
+    const unique = [...new Set(windows)];
+    if (unique.length === 1) return `${unique[0].replace('-', ' — ')}`;
+    return schedule.days.map(d => {
+        const w = getDayWindow(schedule, d);
+        const label = d.charAt(0).toUpperCase() + d.slice(1, 3);
+        return `${label} ${w.start_time}–${w.end_time}`;
+    }).join(' · ');
+}
+
+/** Sync days + global start/end from day_times map. */
+function syncFormFromDayTimes(form: ScheduleCreate): ScheduleCreate {
+    const day_times = form.day_times || {};
+    const days = DAYS.filter(d => d in day_times);
+    const starts = days.map(d => day_times[d].start_time).sort();
+    const ends = days.map(d => day_times[d].end_time).sort();
+    return {
+        ...form,
+        days,
+        start_time: starts[0] || form.start_time || '08:00',
+        end_time: ends[ends.length - 1] || form.end_time || '18:00',
+        day_times,
+    };
+}
 
 /* ── Enrollment Modal ─────────────────────────────────── */
 function EnrollmentModal({
@@ -248,6 +286,8 @@ function AttendanceModal({
     const [attendance, setAttendance] = useState<AttendanceResponse | null>(null);
     const [loadingSessions, setLoadingSessions] = useState(true);
     const [loadingAttendance, setLoadingAttendance] = useState(false);
+    const [loadError, setLoadError] = useState(false);
+    const [retryKey, setRetryKey] = useState(0);
     const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
 
     useEffect(() => {
@@ -258,26 +298,65 @@ function AttendanceModal({
     }, [sessionMenuOpen]);
 
     useEffect(() => {
+        let cancelled = false;
         setLoadingSessions(true);
+        setLoadError(false);
+        setAttendance(null);
+        setSelectedDate(null);
+
         schedulesApi.attendanceSessions(schedule.id!)
             .then(data => {
+                if (cancelled) return;
                 setSessions(data);
-                // Auto-select the most recent session that has any attendance
                 const first = data.find(s => s.count > 0) || data[0] || null;
-                if (first) setSelectedDate(first.date);
+                if (!first) return;
+                setSelectedDate(first.date);
             })
-            .catch(() => { })
-            .finally(() => setLoadingSessions(false));
+            .catch(() => {
+                if (!cancelled) setSessions([]);
+            })
+            .finally(() => {
+                if (!cancelled) setLoadingSessions(false);
+            });
+
+        return () => { cancelled = true; };
     }, [schedule.id]);
 
     useEffect(() => {
-        if (!selectedDate) { setAttendance(null); return; }
+        if (!selectedDate) {
+            setAttendance(null);
+            return;
+        }
+
+        let cancelled = false;
         setLoadingAttendance(true);
-        schedulesApi.attendance(schedule.id!, selectedDate)
-            .then(setAttendance)
-            .catch(() => setAttendance(null))
-            .finally(() => setLoadingAttendance(false));
-    }, [schedule.id, selectedDate]);
+        setLoadError(false);
+
+        const loadAttendance = (retriesLeft: number) => {
+            schedulesApi.attendance(schedule.id!, selectedDate)
+                .then(data => {
+                    if (!cancelled) {
+                        setAttendance(data);
+                        setLoadError(false);
+                    }
+                })
+                .catch(() => {
+                    if (cancelled) return;
+                    if (retriesLeft > 0) {
+                        window.setTimeout(() => loadAttendance(retriesLeft - 1), 400);
+                        return;
+                    }
+                    setAttendance(null);
+                    setLoadError(true);
+                })
+                .finally(() => {
+                    if (!cancelled) setLoadingAttendance(false);
+                });
+        };
+
+        loadAttendance(2);
+        return () => { cancelled = true; };
+    }, [schedule.id, selectedDate, retryKey]);
 
     const formatDate = (dateStr: string) => {
         const d = new Date(dateStr + 'T12:00:00');
@@ -323,7 +402,7 @@ function AttendanceModal({
 
     return (
         <div className="modal-overlay" onClick={onClose}>
-            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 720, height: '80vh', display: 'flex', flexDirection: 'column' }}>
+            <div className="modal modal-tall" onClick={e => e.stopPropagation()}>
                 <div className="modal-header" style={{ flexShrink: 0 }}>
                     <h2 className="modal-title">
                         <ClipboardList size={18} style={{ marginRight: 8, verticalAlign: '-3px' }} />
@@ -409,7 +488,13 @@ function AttendanceModal({
                                         {formatDate(selectedDate)}
                                     </div>
                                     <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>
-                                        {schedule.start_time} — {schedule.end_time}
+                                        {(() => {
+                                            const day = selectedDate
+                                                ? new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase()
+                                                : '';
+                                            const w = day ? getDayWindow(schedule, day) : { start_time: schedule.start_time, end_time: schedule.end_time };
+                                            return `${w.start_time} — ${w.end_time}`;
+                                        })()}
                                     </div>
                                 </div>
 
@@ -445,7 +530,7 @@ function AttendanceModal({
                                                         {r.name.charAt(0).toUpperCase()}
                                                     </div>
                                                     <div style={{ flex: 1, minWidth: 0 }}>
-                                                        <div style={{ fontWeight: 600, fontSize: 13 }}>{r.name}</div>
+                                                        <div className="attendance-name" style={{ fontWeight: 600, fontSize: 13 }}>{r.name}</div>
                                                         <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
                                                             {r.student_id || 'N/A'} · {r.role}
                                                         </div>
@@ -488,7 +573,7 @@ function AttendanceModal({
                                                         {r.name.charAt(0).toUpperCase()}
                                                     </div>
                                                     <div style={{ flex: 1, minWidth: 0 }}>
-                                                        <div style={{ fontWeight: 600, fontSize: 13 }}>{r.name}</div>
+                                                        <div className="attendance-name" style={{ fontWeight: 600, fontSize: 13 }}>{r.name}</div>
                                                         <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
                                                             {r.student_id || 'N/A'} · {r.role}
                                                         </div>
@@ -500,9 +585,21 @@ function AttendanceModal({
                                     </div>
                                 )}
                             </>
-                        ) : (
+                        ) : loadError ? (
                             <div style={{ color: 'var(--text-tertiary)', fontSize: 13, paddingTop: 40, textAlign: 'center' }}>
                                 Failed to load attendance
+                                <div style={{ marginTop: 12 }}>
+                                    <button
+                                        className="btn btn-secondary btn-sm"
+                                        onClick={() => setRetryKey(k => k + 1)}
+                                    >
+                                        Retry
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div style={{ color: 'var(--text-tertiary)', fontSize: 13, paddingTop: 40, textAlign: 'center' }}>
+                                No attendance data for this session
                             </div>
                         )}
                     </div>
@@ -753,11 +850,25 @@ export default function SchedulePage({ role = 'admin' }: { role?: 'admin' | 'tea
         return () => window.removeEventListener('click', close);
     }, []);
 
+    const [formError, setFormError] = useState<string | null>(null);
+
     // Resolve which teacher is logged in, to scope the schedule list
     useEffect(() => {
         if (!isTeacher) { setTeacherUserId(null); return; }
-        authApi.getMe()
-            .then(me => setTeacherUserId(me?.user_id ?? me?.teacher_id ?? null))
+
+        Promise.all([authApi.getMe(), usersApi.list()])
+            .then(([me, users]) => {
+                const fromApi = me?.user_id ?? me?.teacher_id ?? null;
+                if (fromApi) {
+                    setTeacherUserId(fromApi);
+                    return;
+                }
+                const teacher = users.find(u =>
+                    u.role === 'teacher' &&
+                    u.name.trim().toLowerCase() === (me?.username || '').trim().toLowerCase()
+                );
+                setTeacherUserId(teacher?.id ?? null);
+            })
             .catch(() => setTeacherUserId(null));
     }, [isTeacher]);
 
@@ -769,26 +880,76 @@ export default function SchedulePage({ role = 'admin' }: { role?: 'admin' | 'tea
     useEffect(() => { load(); }, []);
 
     const handleSubmit = async () => {
-        const editing = !!editingSchedule?.id;
-        if (editing) {
-            await schedulesApi.update(editingSchedule!.id!, form);
-        } else {
-            await schedulesApi.create(form);
+        const synced = syncFormFromDayTimes(form);
+        setFormError(null);
+
+        if (!synced.name.trim()) {
+            const msg = 'Enter a schedule name';
+            setFormError(msg);
+            toast.error(msg);
+            return;
         }
-        setShowModal(false);
-        setEditingSchedule(null);
-        setForm({ ...emptyForm });
-        load();
-        toast.success(editing ? 'Schedule updated' : 'Schedule created');
+        if (!synced.days.length) {
+            const msg = 'Select at least one day for this schedule';
+            setFormError(msg);
+            toast.error(msg);
+            return;
+        }
+        for (const day of synced.days) {
+            const w = synced.day_times![day];
+            const dayLabel = day.charAt(0).toUpperCase() + day.slice(1);
+            if (!w?.start_time || !w?.end_time) {
+                const msg = `Set start and end time for ${dayLabel}`;
+                setFormError(msg);
+                toast.error(msg);
+                return;
+            }
+            if (w.start_time >= w.end_time) {
+                const msg = `${dayLabel}: start time must be before end time`;
+                setFormError(msg);
+                toast.error(msg);
+                return;
+            }
+        }
+
+        try {
+            const editing = !!editingSchedule?.id;
+            if (editing) {
+                await schedulesApi.update(editingSchedule!.id!, synced);
+            } else {
+                await schedulesApi.create(synced);
+            }
+            setShowModal(false);
+            setEditingSchedule(null);
+            setForm({ ...emptyForm, day_times: {} });
+            setFormError(null);
+            load();
+            toast.success(editing ? 'Schedule updated' : 'Schedule created');
+        } catch (err: any) {
+            const detail = err?.response?.data?.detail;
+            const msg = typeof detail === 'string'
+                ? detail
+                : Array.isArray(detail)
+                    ? detail.map((d: any) => d.msg || JSON.stringify(d)).join('; ')
+                    : (editingSchedule ? 'Failed to update schedule' : 'Failed to create schedule');
+            setFormError(msg);
+            toast.error(msg);
+        }
     };
 
     const openEdit = (schedule: Schedule) => {
         setEditingSchedule(schedule);
+        setFormError(null);
+        const day_times: Record<string, { start_time: string; end_time: string }> = {};
+        for (const day of schedule.days) {
+            day_times[day] = getDayWindow(schedule, day);
+        }
         setForm({
             name: schedule.name,
-            days: schedule.days,
+            days: [...schedule.days],
             start_time: schedule.start_time,
             end_time: schedule.end_time,
+            day_times,
             roles: schedule.roles,
             user_overrides: schedule.user_overrides,
             room_id: schedule.room_id,
@@ -800,7 +961,8 @@ export default function SchedulePage({ role = 'admin' }: { role?: 'admin' | 'tea
 
     const openCreate = () => {
         setEditingSchedule(null);
-        setForm({ ...emptyForm });
+        setFormError(null);
+        setForm({ ...emptyForm, day_times: {} });
         setShowModal(true);
     };
 
@@ -818,10 +980,30 @@ export default function SchedulePage({ role = 'admin' }: { role?: 'admin' | 'tea
     };
 
     const toggleDay = (day: string) => {
-        setForm(f => ({
-            ...f,
-            days: f.days.includes(day) ? f.days.filter(d => d !== day) : [...f.days, day],
-        }));
+        setForm(f => {
+            const day_times = { ...(f.day_times || {}) };
+            if (day in day_times) {
+                delete day_times[day];
+            } else {
+                day_times[day] = {
+                    start_time: f.start_time || '08:00',
+                    end_time: f.end_time || '18:00',
+                };
+            }
+            return syncFormFromDayTimes({ ...f, day_times });
+        });
+    };
+
+    const setDayTime = (day: string, field: 'start_time' | 'end_time', value: string) => {
+        setForm(f => {
+            const day_times = { ...(f.day_times || {}) };
+            const current = day_times[day] || {
+                start_time: f.start_time || '08:00',
+                end_time: f.end_time || '18:00',
+            };
+            day_times[day] = { ...current, [field]: value };
+            return syncFormFromDayTimes({ ...f, day_times });
+        });
     };
 
     const getEnrolledNames = (schedule: Schedule) => {
@@ -856,7 +1038,7 @@ export default function SchedulePage({ role = 'admin' }: { role?: 'admin' | 'tea
 
     return (
         <div>
-            <div className="flex items-center justify-between mb-6">
+            <div className="page-toolbar">
                 <div className="flex items-center gap-3">
                     <Clock size={20} style={{ color: 'var(--text-accent)' }} />
                     <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
@@ -871,16 +1053,16 @@ export default function SchedulePage({ role = 'admin' }: { role?: 'admin' | 'tea
             </div>
 
             {/* Schedule Cards */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 16, marginBottom: 32 }}>
+            <div className="responsive-card-grid" style={{ marginBottom: 32 }}>
                 {visibleSchedules.map(schedule => {
                     const enrolled = getEnrolledNames(schedule);
                     const isExpanded = expandedScheduleId === schedule.id;
                     return (
-                        <div key={schedule.id} className="card" style={isExpanded ? { gridColumn: '1 / -1', overflow: 'visible' } : { overflow: 'visible' }}>
-                            <div className="card-header" style={{ gap: 8, minWidth: 0, overflow: 'visible' }}>
-                                <div className="card-title" style={{ flex: 1, minWidth: 0, flexWrap: 'wrap', overflow: 'visible' }}>
+                        <div key={schedule.id} className={`card schedule-card${isExpanded ? ' schedule-card-expanded' : ''}`}>
+                            <div className="card-header" style={{ gap: 8, minWidth: 0 }}>
+                                <div className="card-title" style={{ flex: 1, minWidth: 0 }}>
                                     <span className={`status-dot ${schedule.active ? 'online' : 'offline'}`} style={{ flexShrink: 0 }} />
-                                    <span style={{ wordBreak: 'break-word' }}>
+                                    <span className="schedule-card-name">
                                         {schedule.name}
                                     </span>
                                     {getRoomName(schedule.room_id) && (
@@ -928,17 +1110,21 @@ export default function SchedulePage({ role = 'admin' }: { role?: 'admin' | 'tea
                             </div>
                             <div className="card-body">
                                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
-                                    {schedule.days.map(d => (
-                                        <span key={d} className="badge badge-info">
-                                            {d.charAt(0).toUpperCase() + d.slice(1, 3)}
-                                        </span>
-                                    ))}
+                                    {schedule.days.map(d => {
+                                        const w = getDayWindow(schedule, d);
+                                        return (
+                                            <span key={d} className="badge badge-info" style={{ whiteSpace: 'nowrap' }}>
+                                                {d.charAt(0).toUpperCase() + d.slice(1, 3)} {w.start_time}–{w.end_time}
+                                            </span>
+                                        );
+                                    })}
                                 </div>
                                 <div style={{
-                                    fontSize: 20, fontWeight: 700, color: 'var(--text-primary)',
-                                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                    fontSize: 16, fontWeight: 700, color: 'var(--text-primary)',
+                                    overflow: 'hidden', wordBreak: 'break-word',
+                                    lineHeight: 1.35,
                                 }}>
-                                    {schedule.start_time} — {schedule.end_time}
+                                    {formatScheduleHours(schedule)}
                                 </div>
                                 {/* Assigned teacher — who can unlock the door */}
                                 {schedule.teacher_id && (
@@ -1051,19 +1237,20 @@ export default function SchedulePage({ role = 'admin' }: { role?: 'admin' | 'tea
                                             <Clock size={12} style={{ marginRight: 4, verticalAlign: '-1px' }} />
                                             Weekly Overview — {schedule.name}
                                         </div>
-                                        <div style={{ overflowX: 'auto' }}>
-                                            <div className="schedule-grid">
+                                        <div className="schedule-scroll schedule-weekly-scroll">
+                                            <div className="schedule-grid schedule-weekly-grid">
                                                 <div className="schedule-cell header" />
                                                 {DAY_SHORT.map(d => <div key={d} className="schedule-cell header">{d}</div>)}
                                                 {HOURS.filter((_, i) => i % 2 === 0).map(hour => {
-                                                    const h = parseInt(hour);
-                                                    const start = parseInt(schedule.start_time);
-                                                    const end = parseInt(schedule.end_time);
-                                                    const isActive = h >= start && h < end;
+                                                    const h = parseInt(hour, 10);
                                                     return (
                                                         <React.Fragment key={`t-${hour}`}>
                                                             <div className="schedule-cell time-label">{hour}</div>
                                                             {DAYS.map((day, di) => {
+                                                                const w = getDayWindow(schedule, day);
+                                                                const start = parseInt(w.start_time, 10);
+                                                                const end = parseInt(w.end_time, 10);
+                                                                const isActive = h >= start && h < end;
                                                                 const dayActive = schedule.days.includes(day) && isActive && schedule.active;
                                                                 return (
                                                                     <div
@@ -1076,7 +1263,7 @@ export default function SchedulePage({ role = 'admin' }: { role?: 'admin' | 'tea
                                                                     >
                                                                         {dayActive && h === start && (
                                                                             <div className="schedule-block" style={{ fontWeight: 600 }}>
-                                                                                {schedule.start_time}–{schedule.end_time}
+                                                                                {w.start_time}–{w.end_time}
                                                                             </div>
                                                                         )}
                                                                     </div>
@@ -1098,38 +1285,65 @@ export default function SchedulePage({ role = 'admin' }: { role?: 'admin' | 'tea
             {/* Create Modal */}
             {showModal && (
                 <div className="modal-overlay" onClick={() => { setShowModal(false); setEditingSchedule(null); }}>
-                    <div className="modal" onClick={e => e.stopPropagation()}>
+                    <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
                             <h2 className="modal-title">{editingSchedule ? 'Edit Schedule' : 'New Schedule'}</h2>
                             <button className="btn btn-ghost" onClick={() => { setShowModal(false); setEditingSchedule(null); }}><X size={18} /></button>
                         </div>
                         <div className="modal-body">
+                            {formError && (
+                                <div className="form-error-banner" role="alert">
+                                    {formError}
+                                </div>
+                            )}
                             <div className="form-group">
                                 <label className="form-label">Schedule Name</label>
                                 <input className="form-input" value={form.name}
-                                    onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. Weekday Lab Hours" />
+                                    onChange={e => { setForm({ ...form, name: e.target.value }); setFormError(null); }}
+                                    placeholder="e.g. Weekday Lab Hours" />
                             </div>
                             <div className="form-group">
-                                <label className="form-label">Days</label>
-                                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                    {DAYS.map(day => (
-                                        <button key={day} className={`btn ${form.days.includes(day) ? 'btn-primary' : 'btn-secondary'} btn-sm`}
-                                            onClick={() => toggleDay(day)}>
-                                            {day.charAt(0).toUpperCase() + day.slice(1, 3)}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                                <div className="form-group">
-                                    <label className="form-label">Start Time</label>
-                                    <input className="form-input" type="time" value={form.start_time}
-                                        onChange={e => setForm({ ...form, start_time: e.target.value })} />
-                                </div>
-                                <div className="form-group">
-                                    <label className="form-label">End Time</label>
-                                    <input className="form-input" type="time" value={form.end_time}
-                                        onChange={e => setForm({ ...form, end_time: e.target.value })} />
+                                <label className="form-label">Days & Hours</label>
+                                <p style={{ fontSize: 12, color: 'var(--text-tertiary)', margin: '0 0 10px' }}>
+                                    Select days, then set different hours for each day if needed.
+                                </p>
+                                <div className="day-hours-list">
+                                    {DAYS.map(day => {
+                                        const selected = !!(form.day_times && day in form.day_times);
+                                        const window = form.day_times?.[day];
+                                        return (
+                                            <div key={day} className={`day-hours-row${selected ? ' selected' : ''}`}>
+                                                <button
+                                                    type="button"
+                                                    className={`btn ${selected ? 'btn-primary' : 'btn-secondary'} btn-sm day-hours-day-btn`}
+                                                    onClick={() => { toggleDay(day); setFormError(null); }}
+                                                >
+                                                    {day.charAt(0).toUpperCase() + day.slice(1, 3)}
+                                                </button>
+                                                {selected && window ? (
+                                                    <div className="day-hours-times">
+                                                        <input
+                                                            className="form-input"
+                                                            type="time"
+                                                            value={window.start_time}
+                                                            onChange={e => { setDayTime(day, 'start_time', e.target.value); setFormError(null); }}
+                                                            aria-label={`${day} start`}
+                                                        />
+                                                        <span className="day-hours-sep">—</span>
+                                                        <input
+                                                            className="form-input"
+                                                            type="time"
+                                                            value={window.end_time}
+                                                            onChange={e => { setDayTime(day, 'end_time', e.target.value); setFormError(null); }}
+                                                            aria-label={`${day} end`}
+                                                        />
+                                                    </div>
+                                                ) : (
+                                                    <span className="day-hours-hint">Off</span>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             </div>
                             <div className="form-group">

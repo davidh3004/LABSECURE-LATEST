@@ -11,7 +11,7 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
 
 from backend.db.schemas import AdminCreate, AdminModel, EventCreate, EventType, EventSeverity
-from backend.db.repositories import AdminRepository, EventRepository
+from backend.db.repositories import AdminRepository, EventRepository, UserRepository
 from backend.config import get_config
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
@@ -34,6 +34,28 @@ class AdminLogin(BaseModel):
 
 class TokenData(BaseModel):
     username: Optional[str] = None
+
+
+class MeResponse(BaseModel):
+    id: Optional[str] = None
+    username: str
+    role: str
+    user_id: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+def _resolve_teacher_user_id(username: str) -> Optional[str]:
+    """Map a teacher login username to the linked User record id."""
+    uname = username.strip().lower()
+    if not uname:
+        return None
+    for user in UserRepository.get_all():
+        role = user.role.value if hasattr(user.role, "value") else str(user.role or "")
+        if role.lower() != "teacher":
+            continue
+        if user.name and user.name.strip().lower() == uname:
+            return user.id
+    return None
 
 def create_access_token(data: dict):
     to_encode = data.copy()
@@ -67,7 +89,18 @@ async def get_current_admin(token: str = Depends(oauth2_scheme)) -> AdminModel:
 @router.post("/login", response_model=Token)
 async def login(credentials: AdminLogin):
     """Authenticate an admin and return a JWT token."""
-    admin = AdminRepository.get_by_username(credentials.username)
+    try:
+        admin = AdminRepository.get_by_username(credentials.username)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except (AttributeError, RuntimeError):
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Database not connected. Add firebase-service-account.json to the "
+                "project root and restart the backend."
+            ),
+        )
     if not admin or not AdminRepository.verify_password(credentials.password, admin.password_hash):
         raise HTTPException(status_code=401, detail="Incorrect username or password")
     
@@ -75,10 +108,20 @@ async def login(credentials: AdminLogin):
     return {"access_token": access_token, "token_type": "bearer", "role": admin.role}
 
 
-@router.get("/me", response_model=AdminModel)
+@router.get("/me", response_model=MeResponse)
 async def get_me(current_admin: AdminModel = Depends(get_current_admin)):
-    """Return the currently authenticated admin."""
-    return current_admin
+    """Return the currently authenticated account, with linked user id for teachers."""
+    user_id = None
+    if current_admin.role == "teacher":
+        user_id = _resolve_teacher_user_id(current_admin.username)
+
+    return MeResponse(
+        id=current_admin.id,
+        username=current_admin.username,
+        role=current_admin.role,
+        user_id=user_id,
+        created_at=current_admin.created_at,
+    )
 
 
 @router.get("/admins", response_model=list[AdminModel])

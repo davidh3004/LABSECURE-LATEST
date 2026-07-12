@@ -13,6 +13,7 @@
  */
 
 import type { AxiosInstance, AxiosRequestConfig } from 'axios';
+import { establishSession } from './authSession';
 
 export const MOCK_ENABLED = import.meta.env.VITE_MOCK === 'true';
 
@@ -30,16 +31,26 @@ const rooms = [
 ];
 
 const users = [
-    { id: 'u1', name: 'Alice Johnson', student_id: 'S1001', role: 'student', active: true, face_encoding_ref: 'ref_u1', created_at: iso(-60 * 24 * 18), updated_at: iso(-60 * 24 * 2) },
-    { id: 'u2', name: 'Bob Smith', student_id: 'S1002', role: 'student', active: true, created_at: iso(-60 * 24 * 17) },
-    { id: 'u3', name: 'Carol Lee', student_id: 'T2001', role: 'teacher', active: true, face_encoding_ref: 'ref_u3', created_at: iso(-60 * 24 * 30) },
-    { id: 'u4', name: 'David Park', student_id: 'E3001', role: 'employee', active: true, created_at: iso(-60 * 24 * 12) },
-    { id: 'u5', name: 'Erin Davis', student_id: 'SEC4001', role: 'security', active: true, face_encoding_ref: 'ref_u5', created_at: iso(-60 * 24 * 9) },
-    { id: 'u6', name: 'Frank Moore', student_id: 'J5001', role: 'janitor', active: false, created_at: iso(-60 * 24 * 5) },
+    { id: 'u1', name: 'Alice Johnson', student_id: 'S1001', role: 'student', active: true, biometric_consent: true, consent_timestamp: iso(-60 * 24 * 18), face_encoding_ref: 'ref_u1', created_at: iso(-60 * 24 * 18), updated_at: iso(-60 * 24 * 2) },
+    { id: 'u2', name: 'Bob Smith', student_id: 'S1002', role: 'student', active: true, biometric_consent: false, created_at: iso(-60 * 24 * 17) },
+    { id: 'u3', name: 'Carol Lee', student_id: 'T2001', role: 'teacher', active: true, biometric_consent: true, consent_timestamp: iso(-60 * 24 * 30), face_encoding_ref: 'ref_u3', created_at: iso(-60 * 24 * 30) },
+    { id: 'u4', name: 'David Park', student_id: 'E3001', role: 'employee', active: true, biometric_consent: false, created_at: iso(-60 * 24 * 12) },
+    { id: 'u5', name: 'Erin Davis', student_id: 'SEC4001', role: 'security', active: true, biometric_consent: true, consent_timestamp: iso(-60 * 24 * 9), face_encoding_ref: 'ref_u5', created_at: iso(-60 * 24 * 9) },
+    { id: 'u6', name: 'Frank Moore', student_id: 'J5001', role: 'janitor', active: false, biometric_consent: false, created_at: iso(-60 * 24 * 5) },
 ];
 
 const schedules = [
-    { id: 'sch1', name: 'Networking 101', days: ['monday', 'wednesday', 'friday'], start_time: '09:00', end_time: '11:00', roles: ['student', 'teacher'], user_overrides: [], room_id: 'room_lab_a', teacher_id: 'u3', active: true },
+    {
+        id: 'sch1', name: 'Networking 101',
+        days: ['monday', 'wednesday', 'friday'],
+        start_time: '08:00', end_time: '12:00',
+        day_times: {
+            monday: { start_time: '08:00', end_time: '10:00' },
+            wednesday: { start_time: '10:00', end_time: '12:00' },
+            friday: { start_time: '09:00', end_time: '11:00' },
+        },
+        roles: ['student', 'teacher'], user_overrides: [], room_id: 'room_lab_a', teacher_id: 'u3', active: true,
+    },
     { id: 'sch2', name: 'Security Lab', days: ['tuesday', 'thursday'], start_time: '13:00', end_time: '15:00', roles: ['student'], user_overrides: ['u4'], room_id: 'room_lab_b', teacher_id: 'u3', active: true },
     { id: 'sch3', name: 'Maintenance Window', days: ['saturday'], start_time: '08:00', end_time: '10:00', roles: ['janitor', 'employee'], user_overrides: [], room_id: 'room_server', active: false },
 ];
@@ -129,10 +140,27 @@ const body = (cfg: AxiosRequestConfig) => {
     catch { return {}; }
 };
 
+const resolveTeacherUserId = (username: string) => {
+    const uname = username.trim().toLowerCase();
+    const teacher = users.find(u => u.role === 'teacher' && u.name.trim().toLowerCase() === uname);
+    return teacher?.id ?? null;
+};
+
 const routes: Route[] = [
     // ── Auth ──
-    { method: 'post', pattern: /\/api\/auth\/login$/, handler: (_m, c) => { const role = (body(c).username || '').toLowerCase().includes('teacher') ? 'teacher' : 'admin'; const teacher = users.find(u => u.role === 'teacher'); return { access_token: 'mock-token', token_type: 'bearer', role, user_id: role === 'teacher' ? (teacher?.id ?? null) : null }; } },
-    { method: 'get', pattern: /\/api\/auth\/me$/, handler: () => { const role = localStorage.getItem('admin_role') || 'admin'; const teacher = users.find(u => u.role === 'teacher'); return { username: role === 'teacher' ? (teacher?.name ?? 'teacher') : 'admin', role, user_id: role === 'teacher' ? (teacher?.id ?? null) : null }; } },
+    { method: 'post', pattern: /\/api\/auth\/login$/, handler: (_m, c) => {
+        const username = (body(c).username || '').trim();
+        const admin = admins.find(a => a.username === username);
+        const role = admin?.role ?? (username.toLowerCase().includes('teacher') ? 'teacher' : 'admin');
+        const user_id = role === 'teacher' ? resolveTeacherUserId(username) : null;
+        return { access_token: 'mock-token', token_type: 'bearer', role, user_id };
+    } },
+    { method: 'get', pattern: /\/api\/auth\/me$/, handler: () => {
+        const role = localStorage.getItem('admin_role') || 'admin';
+        const username = localStorage.getItem('admin_username') || (role === 'teacher' ? (users.find(u => u.role === 'teacher')?.name ?? 'teacher') : 'admin');
+        const user_id = role === 'teacher' ? resolveTeacherUserId(username) : null;
+        return { username, role, user_id };
+    } },
     { method: 'get', pattern: /\/api\/auth\/admins$/, handler: () => ok(admins) },
     { method: 'post', pattern: /\/api\/auth\/admins$/, handler: (_m, c) => { const a = { id: newId('a'), username: body(c).username, role: body(c).role || 'admin', created_at: iso() }; admins.push(a); return a; } },
     { method: 'delete', pattern: /\/api\/auth\/admins\/([^/]+)$/, handler: (m) => { const i = admins.findIndex(a => a.id === m[1]); if (i >= 0) admins.splice(i, 1); return { status: 'deleted' }; } },
@@ -207,8 +235,7 @@ const routes: Route[] = [
 // ── Install the mock adapter onto an axios instance ───────────────────────
 export function installMock(api: AxiosInstance) {
     // Auto-bypass login: seed a token + default role so the app starts signed in.
-    if (!localStorage.getItem('admin_token')) localStorage.setItem('admin_token', 'mock-token');
-    if (!localStorage.getItem('admin_role')) localStorage.setItem('admin_role', 'admin');
+    if (!localStorage.getItem('admin_token')) establishSession('mock-token', 'admin');
 
     api.defaults.adapter = async (config) => {
         const method = (config.method || 'get').toLowerCase();

@@ -21,7 +21,7 @@ export default function UsersPage() {
     const [roleFilter, setRoleFilter] = useState('');
     const [showModal, setShowModal] = useState(false);
     const [editing, setEditing] = useState<User | null>(null);
-    const [form, setForm] = useState<UserCreate>({ name: '', student_id: '', role: 'student', active: true });
+    const [form, setForm] = useState<UserCreate>({ name: '', student_id: '', role: 'student', active: true, biometric_consent: false });
     const [step, setStep] = useState<'details' | 'face'>('details');
     const [createdUserId, setCreatedUserId] = useState<string | null>(null);
     const [enrolling, setEnrolling] = useState(false);
@@ -38,7 +38,7 @@ export default function UsersPage() {
 
     const openCreate = () => {
         setEditing(null);
-        setForm({ name: '', student_id: '', role: 'student', active: true });
+        setForm({ name: '', student_id: '', role: 'student', active: true, biometric_consent: false });
         setStep('details');
         setCreatedUserId(null);
         setShowModal(true);
@@ -46,22 +46,36 @@ export default function UsersPage() {
 
     const openEdit = (user: User) => {
         setEditing(user);
-        setForm({ name: user.name, student_id: user.student_id || '', role: user.role, active: user.active });
+        setForm({
+            name: user.name, student_id: user.student_id || '', role: user.role, active: user.active,
+            biometric_consent: user.biometric_consent ?? false,
+        });
         setStep('details');
         setShowModal(true);
     };
 
     const handleSubmit = async () => {
+        // Stamp the consent time whenever consent is granted
+        const payload: UserCreate = {
+            ...form,
+            consent_timestamp: form.biometric_consent ? new Date().toISOString() : undefined,
+        };
         if (editing?.id) {
-            await usersApi.update(editing.id, form);
+            await usersApi.update(editing.id, payload);
             setShowModal(false);
             load();
             toast.success('User updated');
         } else {
             // Create user, then move to face capture
-            const newUser = await usersApi.create(form);
+            const newUser = await usersApi.create(payload);
             setCreatedUserId(newUser.id!);
-            setStep('face');
+            if (payload.biometric_consent) {
+                setStep('face');
+            } else {
+                toast.success('User created (no biometric consent — face enrollment skipped)');
+                setShowModal(false);
+                load();
+            }
         }
     };
 
@@ -71,9 +85,9 @@ export default function UsersPage() {
         try {
             await usersApi.enrollFace(createdUserId, photo);
             toast.success('User created and face enrolled');
-        } catch (err) {
+        } catch (err: any) {
             console.error('Face enrollment failed:', err);
-            toast.error('Face enrollment failed');
+            toast.error(err?.response?.data?.detail || 'Face enrollment failed');
         }
         setEnrolling(false);
         setShowModal(false);
@@ -87,6 +101,14 @@ export default function UsersPage() {
 
     /* ── Inline face enroll for existing users ── */
     const [enrollUserId, setEnrollUserId] = useState<string | null>(null);
+
+    const handleEnrollClick = (user: User) => {
+        if (!user.biometric_consent) {
+            toast.error('This user has not signed the biometric consent form. Edit the user and check "Biometric disclosure consented" first.');
+            return;
+        }
+        setEnrollUserId(user.id!);
+    };
 
     const handleDelete = async (id: string) => {
         const ok = await confirmDialog({
@@ -103,7 +125,7 @@ export default function UsersPage() {
 
     return (
         <div>
-            <div className="flex items-start justify-between mb-6" style={{ gap: 16 }}>
+            <div className="page-toolbar">
                 <div className="flex flex-col gap-3" style={{ flex: 1, maxWidth: 440 }}>
                     <div className="search-box" style={{ width: '100%' }}>
                         <Search />
@@ -123,13 +145,14 @@ export default function UsersPage() {
 
             <div className="card">
                 <div className="table-container">
-                    <table>
+                    <table className="data-table">
                         <thead>
                             <tr>
-                                <th>Name</th>
+                                <th className="cell-name">Name</th>
                                 <th>Student ID</th>
                                 <th>Role</th>
                                 <th>Status</th>
+                                <th>Consent</th>
                                 <th>Face Enrolled</th>
                                 <th>Actions</th>
                             </tr>
@@ -137,7 +160,7 @@ export default function UsersPage() {
                         <tbody>
                             {filtered.map(user => (
                                 <tr key={user.id}>
-                                    <td style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{user.name}</td>
+                                    <td className="cell-name" style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{user.name}</td>
                                     <td style={{ fontFamily: 'monospace' }}>{user.student_id || '—'}</td>
                                     <td>
                                         <span className={`badge badge-info ${roleColors[user.role] || ''}`}>
@@ -151,13 +174,21 @@ export default function UsersPage() {
                                         </span>
                                     </td>
                                     <td>
+                                        <span className={`badge ${user.biometric_consent ? 'badge-success' : 'badge-warning'}`}
+                                            title={user.biometric_consent
+                                                ? (user.consent_timestamp ? `Consented ${new Date(user.consent_timestamp).toLocaleString()}` : 'Consented')
+                                                : 'Biometric consent not signed — face enrollment blocked'}>
+                                            {user.biometric_consent ? 'Consented' : 'No consent'}
+                                        </span>
+                                    </td>
+                                    <td>
                                         {user.face_encoding_ref ? (
                                             <div className="flex gap-2" style={{ alignItems: 'center' }}>
                                                 <span className="badge badge-success">Enrolled</span>
                                                 <button
                                                     className="btn btn-ghost btn-sm"
                                                     style={{ color: 'var(--color-primary)', fontSize: 12 }}
-                                                    onClick={() => setEnrollUserId(user.id!)}
+                                                    onClick={() => handleEnrollClick(user)}
                                                     title="Re-enroll face"
                                                 >
                                                     <Camera size={14} /> Re-enroll
@@ -167,7 +198,7 @@ export default function UsersPage() {
                                             <button
                                                 className="btn btn-ghost btn-sm"
                                                 style={{ color: 'var(--color-warning)', fontSize: 12 }}
-                                                onClick={() => setEnrollUserId(user.id!)}
+                                                onClick={() => handleEnrollClick(user)}
                                                 title="Enroll face"
                                             >
                                                 <Camera size={14} /> Enroll
@@ -187,7 +218,7 @@ export default function UsersPage() {
                                 </tr>
                             ))}
                             {filtered.length === 0 && (
-                                <tr><td colSpan={6} className="text-center" style={{ padding: 40, color: 'var(--text-tertiary)' }}>
+                                <tr><td colSpan={7} className="text-center" style={{ padding: 40, color: 'var(--text-tertiary)' }}>
                                     No users found
                                 </td></tr>
                             )}
@@ -237,6 +268,19 @@ export default function UsersPage() {
                                             Active
                                         </label>
                                     </div>
+                                    <div className="form-group">
+                                        <label className="form-label" style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                                            <input type="checkbox" checked={!!form.biometric_consent}
+                                                onChange={e => setForm({ ...form, biometric_consent: e.target.checked })}
+                                                style={{ marginTop: 2 }} />
+                                            <span>
+                                                Biometric disclosure consented
+                                                <span style={{ display: 'block', fontSize: 11, color: 'var(--text-tertiary)', fontWeight: 400, marginTop: 2 }}>
+                                                    Required for face enrollment. Confirms this person signed the biometric data consent form.
+                                                </span>
+                                            </span>
+                                        </label>
+                                    </div>
                                 </div>
                                 <div className="modal-footer">
                                     <button className="btn btn-secondary" onClick={() => setShowModal(false)}>Cancel</button>
@@ -278,9 +322,9 @@ export default function UsersPage() {
                                     try {
                                         await usersApi.enrollFace(enrollUserId, photo);
                                         toast.success('Face enrolled');
-                                    } catch (err) {
+                                    } catch (err: any) {
                                         console.error('Enrollment failed:', err);
-                                        toast.error('Face enrollment failed');
+                                        toast.error(err?.response?.data?.detail || 'Face enrollment failed');
                                     }
                                     setEnrollUserId(null);
                                     load();

@@ -86,6 +86,24 @@ async def enroll_guest_face(guest_id: str, photo: UploadFile = File(...)):
     if frame is None:
         raise HTTPException(status_code=400, detail="Could not decode image — ensure it is a valid JPEG/PNG.")
 
+    # Calculate image brightness
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    mean_brightness = gray.mean()
+    if mean_brightness < 40:
+        raise HTTPException(status_code=422, detail="Face photo is too dark. Please provide a well-lit photo.")
+    if mean_brightness > 220:
+        raise HTTPException(status_code=422, detail="Face photo is overexposed. Please reduce bright lighting.")
+
+    # Calculate image sharpness (Laplacian variance).
+    # Threshold 50: typical laptop webcams produce ~80 on a normal in-focus
+    # frame, so the original threshold of 100 rejected every capture.
+    sharpness = cv2.Laplacian(gray, cv2.CV_64F).var()
+    if sharpness < 50:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Face photo is too blurry (sharpness {sharpness:.0f}, need 50+). Please take a clearer picture.",
+        )
+
     pipeline = dependencies.vision_pipeline
     if pipeline is None:
         raise HTTPException(status_code=503, detail="Vision pipeline is not running.")
@@ -108,9 +126,15 @@ async def enroll_guest_face(guest_id: str, photo: UploadFile = File(...)):
 
     desc_list: list[float] = embedding.tolist()
 
-    # Save 512-dim descriptor to Firestore
+    # Save 512-dim descriptor to Firestore (encrypted at rest)
     blob_path = f"face_photos/guests/{guest_id}/photo.jpg"
-    GuestRepository.update_face_data(guest_id, desc_list, blob_path)
+    try:
+        GuestRepository.update_face_data(guest_id, desc_list, blob_path)
+    except ValueError as key_err:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Biometric encryption unavailable: {key_err}",
+        )
     log.info(f"Saved 512-dim face descriptor for guest {guest_id}")
 
     # Upload photo to Firebase Storage (best-effort)

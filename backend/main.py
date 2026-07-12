@@ -155,6 +155,81 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"✗ Door auto-lock thread failed: {e}")
 
+    # ── Database Biometric Encryption Migration ────────────
+    # Requires LABSECURE_MASTER_KEY env var (64-char hex, 32 bytes).
+    try:
+        from backend.db.firebase_client import get_firestore
+        from backend.core.encryption import BiometricEncryptor
+        import numpy as np
+        from google.cloud import firestore
+
+        db = get_firestore()
+        encryptor = BiometricEncryptor()
+
+        # 1. Migrate Users
+        users_ref = db.collection("users").stream()
+        migrated_users = 0
+        for doc in users_ref:
+            data = doc.to_dict()
+            if "face_descriptor" in data and "face_descriptor_encrypted" not in data:
+                desc = data["face_descriptor"]
+                if desc and isinstance(desc, list) and len(desc) == 512:
+                    embedding_arr = np.array(desc, dtype=np.float32)
+                    serialized = BiometricEncryptor.serialize_embedding(embedding_arr)
+                    encrypted_payload = encryptor.encrypt(serialized)
+                    db.collection("users").document(doc.id).update({
+                        "face_descriptor_encrypted": encrypted_payload,
+                        "face_descriptor": firestore.DELETE_FIELD,
+                    })
+                    migrated_users += 1
+        if migrated_users > 0:
+            logger.info(f"✓ Migrated {migrated_users} user face descriptors to encrypted format.")
+
+        # 2. Migrate Guests
+        guests_ref = db.collection("guests").stream()
+        migrated_guests = 0
+        for doc in guests_ref:
+            data = doc.to_dict()
+            if "face_descriptor" in data and "face_descriptor_encrypted" not in data:
+                desc_str = data["face_descriptor"]
+                if desc_str and isinstance(desc_str, str):
+                    try:
+                        desc = [float(x) for x in desc_str.split(",")]
+                        if len(desc) == 512:
+                            embedding_arr = np.array(desc, dtype=np.float32)
+                            serialized = BiometricEncryptor.serialize_embedding(embedding_arr)
+                            encrypted_payload = encryptor.encrypt(serialized)
+                            db.collection("guests").document(doc.id).update({
+                                "face_descriptor_encrypted": encrypted_payload,
+                                "face_descriptor": firestore.DELETE_FIELD,
+                            })
+                            migrated_guests += 1
+                    except Exception:
+                        pass
+        if migrated_guests > 0:
+            logger.info(f"✓ Migrated {migrated_guests} guest face descriptors to encrypted format.")
+    except Exception as migration_err:
+        logger.warning(f"Skipping database biometric migration: {migration_err}")
+
+    # ── Start Automated Biometric Data Retention Scheduler ──
+    try:
+        from backend.services.retention import purge_expired_guest_biometrics
+        import asyncio
+
+        async def retention_scheduler():
+            while True:
+                try:
+                    purge_expired_guest_biometrics()
+                except Exception as scheduler_err:
+                    logger.error(f"Error in data retention job: {scheduler_err}")
+                # Run once every 24 hours
+                await asyncio.sleep(24 * 3600)
+
+        asyncio.create_task(retention_scheduler())
+        logger.info("✓ Automated Biometric Data Retention Scheduler started")
+    except Exception as scheduler_init_err:
+        logger.warning(f"✗ Automated Biometric Data Retention Scheduler init failed: {scheduler_init_err}")
+
     logger.info("=" * 60)
     logger.info("  LabSecure AI v2 — Ready")
     logger.info("=" * 60)

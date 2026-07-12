@@ -203,6 +203,25 @@ def get_snapshot(camera_id: str):
     return Response(content=jpeg_bytes, media_type="image/jpeg")
 
 
+@router.get("/{camera_id}/raw-snapshot")
+def get_raw_snapshot(camera_id: str):
+    """
+    Get the latest RAW frame (no recognition overlays, full resolution).
+    Used by face enrollment when capturing from a backend camera, so the
+    enrollment photo isn't polluted by bounding boxes and labels.
+    """
+    if _pipeline is None:
+        raise HTTPException(status_code=503, detail="Vision pipeline not running")
+
+    pipeline_id = resolve_camera_id(camera_id)
+    jpeg_bytes = _pipeline.get_raw_snapshot_jpeg(pipeline_id)
+
+    if jpeg_bytes is None:
+        raise HTTPException(status_code=404, detail="No frame available")
+
+    return Response(content=jpeg_bytes, media_type="image/jpeg")
+
+
 @router.post("/", response_model=CameraModel, status_code=201)
 def create_camera(data: CameraCreate):
     """Create a new camera and start it in the vision pipeline immediately."""

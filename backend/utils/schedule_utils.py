@@ -15,6 +15,27 @@ from backend.utils.sim_clock import sim_clock
 logger = logging.getLogger(__name__)
 
 
+def get_schedule_window_for_day(schedule: ScheduleModel, day: str) -> tuple[str, str]:
+    """
+    Return (start_time, end_time) for a specific weekday.
+    Uses day_times[day] when present; otherwise falls back to global start/end.
+    """
+    day_l = (day or "").lower()
+    day_times = getattr(schedule, "day_times", None) or {}
+    window = day_times.get(day_l)
+    if window is not None:
+        start = window.start_time if hasattr(window, "start_time") else window.get("start_time")
+        end = window.end_time if hasattr(window, "end_time") else window.get("end_time")
+        if start and end:
+            return start, end
+    return schedule.start_time, schedule.end_time
+
+
+def get_today_schedule_window(schedule: ScheduleModel) -> tuple[str, str]:
+    """Return today's (start_time, end_time) for a schedule."""
+    return get_schedule_window_for_day(schedule, sim_clock.today_day_name())
+
+
 def get_active_schedule(room_id: str) -> Optional[ScheduleModel]:
     """
     Find the currently active schedule for a given room.
@@ -22,7 +43,7 @@ def get_active_schedule(room_id: str) -> Optional[ScheduleModel]:
       - It is marked active
       - It has this room_id
       - Today's day is in its days list
-      - Current time is between start_time and end_time
+      - Current time is between that day's start_time and end_time
     """
     now = sim_clock.now()
     today = sim_clock.today_day_name()
@@ -35,7 +56,8 @@ def get_active_schedule(room_id: str) -> Optional[ScheduleModel]:
             continue
         if today not in [d.lower() for d in schedule.days]:
             continue
-        if schedule.start_time <= current_time_str <= schedule.end_time:
+        start_time, end_time = get_schedule_window_for_day(schedule, today)
+        if start_time <= current_time_str <= end_time:
             return schedule
 
     return None
@@ -58,13 +80,15 @@ def get_schedule_in_grace_period(room_id: str, grace_minutes: int = 30) -> Optio
         if today not in [d.lower() for d in schedule.days]:
             continue
 
+        _start_time, end_time = get_schedule_window_for_day(schedule, today)
+
         # Check if we're past end_time but within grace period
-        end_h, end_m = map(int, schedule.end_time.split(":"))
+        end_h, end_m = map(int, end_time.split(":"))
         grace_h = end_h + (end_m + grace_minutes) // 60
         grace_m = (end_m + grace_minutes) % 60
         grace_time_str = f"{grace_h:02d}:{grace_m:02d}"
 
-        if schedule.end_time < current_time_str <= grace_time_str:
+        if end_time < current_time_str <= grace_time_str:
             return schedule
 
     return None

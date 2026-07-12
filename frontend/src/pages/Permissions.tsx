@@ -95,7 +95,7 @@ export default function PermissionsPage() {
 
     return (
         <div>
-            <div className="flex items-center justify-between mb-6">
+            <div className="page-toolbar">
                 <div className="flex items-center gap-3">
                     <Shield size={20} style={{ color: 'var(--text-accent)' }} />
                     <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
@@ -148,7 +148,7 @@ export default function PermissionsPage() {
                                                 {perm.user_id ? 'User' : 'Role'}
                                             </span>
                                         </td>
-                                        <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                                        <td style={{ fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
                                             {perm.user_id ? getUserName(perm.user_id) : (
                                                 <span style={{ textTransform: 'capitalize' }}>{perm.role}</span>
                                             )}
@@ -204,7 +204,7 @@ export default function PermissionsPage() {
                                                 style={{ margin: '0 auto' }}
                                             />
                                         </td>
-                                        <td style={{ color: 'var(--text-tertiary)', fontSize: 12 }}>{perm.granted_by}</td>
+                                        <td style={{ color: 'var(--text-tertiary)', fontSize: 12, whiteSpace: 'nowrap' }}>{perm.granted_by}</td>
                                         <td>
                                             <button className="btn btn-ghost btn-sm" onClick={() => handleDelete(perm.id!)}>
                                                 <Trash2 size={14} />

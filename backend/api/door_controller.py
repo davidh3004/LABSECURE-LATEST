@@ -31,6 +31,7 @@ from backend.utils.schedule_utils import (
     get_schedule_in_grace_period,
     is_user_authorized_to_unlock,
     get_attendance_status,
+    get_today_schedule_window,
 )
 from backend.db.repositories import RoomRepository, CameraRepository
 
@@ -75,7 +76,8 @@ class DoorState:
         self.unlocked_at = sim_clock.now()
         self.schedule_id = schedule.id
         self.schedule_name = schedule.name
-        self.schedule_end_time = schedule.end_time
+        _start, end_time = get_today_schedule_window(schedule)
+        self.schedule_end_time = end_time
 
         # Fresh lists for the new session
         self.attendance = []
@@ -174,6 +176,24 @@ class DoorState:
         active_schedule = get_active_schedule(self.room_id)
         grace_schedule = get_schedule_in_grace_period(self.room_id) if not active_schedule else None
 
+        active_payload = None
+        if active_schedule:
+            s0, s1 = get_today_schedule_window(active_schedule)
+            active_payload = {
+                "id": active_schedule.id,
+                "name": active_schedule.name,
+                "start_time": s0,
+                "end_time": s1,
+            }
+        elif grace_schedule:
+            s0, s1 = get_today_schedule_window(grace_schedule)
+            active_payload = {
+                "id": grace_schedule.id,
+                "name": f"{grace_schedule.name} (grace period)",
+                "start_time": s0,
+                "end_time": s1,
+            }
+
         return {
             "room_id": self.room_id,
             "room_name": self.room_name,
@@ -185,21 +205,7 @@ class DoorState:
             "schedule_name": self.schedule_name,
             "schedule_end_time": self.schedule_end_time,
             "auto_lock_at": auto_lock_at,
-            "active_schedule": (
-                {
-                    "id": active_schedule.id,
-                    "name": active_schedule.name,
-                    "start_time": active_schedule.start_time,
-                    "end_time": active_schedule.end_time,
-                } if active_schedule else (
-                    {
-                        "id": grace_schedule.id,
-                        "name": f"{grace_schedule.name} (grace period)",
-                        "start_time": grace_schedule.start_time,
-                        "end_time": grace_schedule.end_time,
-                    } if grace_schedule else None
-                )
-            ),
+            "active_schedule": active_payload,
             # Three distinct entry lists
             "attendance": self.attendance,
             "attendance_count": len(self.attendance),
@@ -446,6 +452,33 @@ def list_doors():
         _get_or_create_door(room.id)
     with _doors_lock:
         return [door.to_dict() for door in _doors.values()]
+
+
+@router.get("/hardware/state")
+def hardware_lock_state():
+    """
+    Lightweight lock state for Pico / servo hardware.
+    Returns a single JSON payload so the Pico only needs one HTTP call.
+    """
+    emergency_lock = False
+    try:
+        from backend.db.repositories import SystemStateRepository
+        emergency_lock = bool(SystemStateRepository.get().emergency_lock)
+    except Exception as e:
+        logger.warning(f"Hardware state: could not read emergency status ({e})")
+
+    unlocked_rooms: list[str] = []
+    with _doors_lock:
+        for door in _doors.values():
+            if not door.locked:
+                unlocked_rooms.append(door.room_name or door.room_id)
+
+    unlocked = (not emergency_lock) and len(unlocked_rooms) > 0
+    return {
+        "unlocked": unlocked,
+        "emergency_lock": emergency_lock,
+        "unlocked_rooms": unlocked_rooms,
+    }
 
 
 @router.get("/{room_id}/status")

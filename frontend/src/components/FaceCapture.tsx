@@ -45,6 +45,9 @@ export default function FaceCapture({ onCapture, onSkip, multiAngle = true }: Fa
     const [backendCameras, setBackendCameras] = useState<any[]>([]);
     const [selectedCamera, setSelectedCamera] = useState<string>('local');
     const [backendFrameUrl, setBackendFrameUrl] = useState<string | null>(null);
+    // True when getUserMedia failed because the device is busy (typically the
+    // backend vision pipeline holds the webcam) — triggers backend-feed fallback.
+    const [localUnavailable, setLocalUnavailable] = useState(false);
 
     const [angles, setAngles] = useState<AngleCapture[]>(
         ANGLES.map(a => ({ ...a, captured: false, photo: null }))
@@ -81,8 +84,16 @@ export default function FaceCapture({ onCapture, onSkip, multiAngle = true }: Fa
                 streamRef.current = stream;
                 if (videoRef.current) videoRef.current.srcObject = stream;
                 setCameraReady(true);
+                setLocalUnavailable(false);
             } catch (err: any) {
-                if (!cancelled) setError(`Camera error: ${err.message}`);
+                if (cancelled) return;
+                // NotReadableError = another process (the backend recognition
+                // pipeline) has locked the webcam. Fall back to backend stream.
+                if (err.name === 'NotReadableError' || err.name === 'AbortError' || err.name === 'NotFoundError') {
+                    setLocalUnavailable(true);
+                } else {
+                    setError(`Camera error: ${err.message}`);
+                }
             }
         })();
         return () => {
@@ -90,6 +101,21 @@ export default function FaceCapture({ onCapture, onSkip, multiAngle = true }: Fa
             streamRef.current?.getTracks().forEach(t => t.stop());
         };
     }, [selectedCamera]);
+
+    // 2b. If the local webcam is locked by another process, auto-switch to a
+    // backend camera feed (prefer webcam-type cameras — same physical device).
+    useEffect(() => {
+        if (!localUnavailable || selectedCamera !== 'local') return;
+        if (backendCameras.length === 0) {
+            setError(
+                'Local webcam is unavailable (likely in use by the recognition pipeline), ' +
+                'and no backend cameras were found to fall back to.'
+            );
+            return;
+        }
+        const fallback = backendCameras.find(c => c.type === 'webcam' && c.enabled) || backendCameras[0];
+        setSelectedCamera(fallback.id);
+    }, [localUnavailable, backendCameras, selectedCamera]);
 
     // 3. Start backend stream (only if selectedCamera !== 'local')
     useEffect(() => {
@@ -124,27 +150,29 @@ export default function FaceCapture({ onCapture, onSkip, multiAngle = true }: Fa
     };
 
     // Capture a JPEG snapshot from the live video frame
-    const capturePhoto = useCallback((): Promise<Blob | null> => {
+    const capturePhoto = useCallback(async (): Promise<Blob | null> => {
+        if (selectedCamera !== 'local') {
+            // Backend camera: fetch the raw frame from the server. The WebSocket
+            // preview frames have recognition overlays drawn on them and are
+            // downscaled — unsuitable for enrollment.
+            try {
+                return await camerasApi.rawSnapshot(selectedCamera);
+            } catch {
+                return null;
+            }
+        }
+
         const video = videoRef.current;
-        const img   = imgRef.current;
+        if (!video || video.readyState < 2) return null;
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d')!;
+        canvas.width  = video.videoWidth;
+        canvas.height = video.videoHeight;
+        // Mirror horizontally to match display
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(video, 0, 0);
 
-        if (selectedCamera === 'local') {
-            if (!video || video.readyState < 2) return Promise.resolve(null);
-            canvas.width  = video.videoWidth;
-            canvas.height = video.videoHeight;
-            // Mirror horizontally to match display
-            ctx.translate(canvas.width, 0);
-            ctx.scale(-1, 1);
-            ctx.drawImage(video, 0, 0);
-        } else {
-            if (!img || !img.complete) return Promise.resolve(null);
-            canvas.width  = img.naturalWidth;
-            canvas.height = img.naturalHeight;
-            ctx.drawImage(img, 0, 0);
-        }
-        
         return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.92));
     }, [selectedCamera]);
 
@@ -306,6 +334,11 @@ export default function FaceCapture({ onCapture, onSkip, multiAngle = true }: Fa
                             Windows only allows one app to lock the camera. If this fails, select a Backend option.
                         </p>
                     )}
+                    {selectedCamera !== 'local' && localUnavailable && (
+                        <p style={{ fontSize: 11, color: 'var(--color-warning, #d97706)', marginTop: 4, marginLeft: 4 }}>
+                            Local webcam is in use by the recognition pipeline — switched to the backend camera feed.
+                        </p>
+                    )}
                 </div>
             )}
 
@@ -375,12 +408,12 @@ export default function FaceCapture({ onCapture, onSkip, multiAngle = true }: Fa
             </div>
 
             {/* Action buttons */}
-            <div style={{ display: 'flex', gap: 12, marginTop: 16, justifyContent: 'flex-end' }}>
+            <div className="face-capture-actions">
                 <button className="btn btn-secondary" onClick={onSkip}>Skip</button>
 
                 {multiAngle ? (
                     allCaptured ? (
-                        <button className="btn btn-primary" onClick={handleFinishMultiAngle} style={{ minWidth: 180 }}>
+                        <button className="btn btn-primary" onClick={handleFinishMultiAngle}>
                             <Check size={16} /> Complete Enrollment ({capturedCount} angles)
                         </button>
                     ) : (
@@ -388,7 +421,6 @@ export default function FaceCapture({ onCapture, onSkip, multiAngle = true }: Fa
                             className="btn btn-primary"
                             onClick={handleAngleCapture}
                             disabled={!cameraReady || capturing}
-                            style={{ minWidth: 180 }}
                         >
                             {capturing
                                 ? <><Loader2 size={16} className="spin" /> Capturing…</>
@@ -401,7 +433,6 @@ export default function FaceCapture({ onCapture, onSkip, multiAngle = true }: Fa
                         className="btn btn-primary"
                         onClick={handleSingleCapture}
                         disabled={!cameraReady || capturing}
-                        style={{ minWidth: 160 }}
                     >
                         {capturing
                             ? <><Loader2 size={16} className="spin" /> Capturing…</>

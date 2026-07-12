@@ -149,8 +149,6 @@ class FaceEngine:
                 best_score = score
                 best_match = user_id
 
-        with open("c:/Users/janna/Downloads/labsecure-ai-v2 2/labsecure-ai-v2/debug_output.txt", "a") as f:
-            f.write(f"Match result: id={best_match}, score={best_score:.3f}, threshold={self.recognition_threshold}\n")
         logger.info(f"Match result: id={best_match}, score={best_score:.3f}, threshold={self.recognition_threshold}")
         if best_score >= self.recognition_threshold:
             return best_match, best_score

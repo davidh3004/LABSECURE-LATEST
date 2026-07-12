@@ -134,6 +134,8 @@ export const camerasApi = {
         api.get<HealthResponse>('/api/cameras/health').then(r => r.data),
     list: () =>
         api.get<CameraConfig[]>('/api/cameras/list').then(r => r.data),
+    rawSnapshot: (id: string) =>
+        api.get<Blob>(`/api/cameras/${id}/raw-snapshot`, { responseType: 'blob' }).then(r => r.data),
     create: (data: { name: string; type: 'ip' | 'webcam'; enabled?: boolean; ip?: string; room_id?: string }) =>
         api.post<CameraConfig>('/api/cameras/', data).then(r => r.data),
     update: (id: string, data: Partial<CameraConfig>) =>
@@ -161,9 +163,13 @@ export function createFeedSocket(cameraId: string): WebSocket {
     if (MOCK_ENABLED) {
         return createFakeFeedSocket();
     }
+    // Connect relative to the page and let the Vite dev-server `/ws` proxy
+    // forward to the backend. This works on localhost, LAN IPs, and ngrok
+    // (where only the frontend port is tunneled and https requires wss).
+    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const wsBase = API_BASE
         ? API_BASE.replace(/^http/, 'ws')
-        : `ws://${window.location.hostname}:8000`;
+        : `${proto}://${window.location.host}`;
     return new WebSocket(`${wsBase}/ws/feed/${cameraId}`);
 }
 

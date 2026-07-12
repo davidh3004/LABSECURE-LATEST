@@ -97,6 +97,7 @@ export default function AdminsPage() {
             </div>
 
             <div className="card">
+                <div className="table-container">
                 <table className="table">
                     <thead>
                         <tr>
@@ -146,6 +147,7 @@ export default function AdminsPage() {
                         ))}
                     </tbody>
                 </table>
+                </div>
                 {admins.length === 0 && (
                     <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-secondary)' }}>
                         No accounts found.

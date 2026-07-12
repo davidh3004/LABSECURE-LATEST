@@ -3,9 +3,10 @@
 import { useState } from 'react';
 import { Lock, User, LogIn, Loader2 } from 'lucide-react';
 import { authApi } from '../api/client';
+import { establishSession } from '../api/authSession';
 
 interface LoginPageProps {
-    onLoginSuccess: (token: string) => void;
+    onLoginSuccess: (token: string, role: string) => void;
 }
 
 export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
@@ -21,9 +22,8 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
 
         try {
             const res = await authApi.login(username, password);
-            localStorage.setItem('admin_token', res.access_token);
-            localStorage.setItem('admin_role', res.role);
-            onLoginSuccess(res.access_token);
+            establishSession(res.access_token, res.role, username);
+            onLoginSuccess(res.access_token, res.role);
         } catch (err: any) {
             setError(err.response?.data?.detail || 'Invalid credentials');
         } finally {

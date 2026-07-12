@@ -11,3 +11,4 @@ export { default as RoomsPage } from './Rooms';
 export { default as LoginPage } from './LoginPage';
 export { default as AdminsPage } from './AdminsPage';
 export { default as DoorSimulationPage } from './DoorSimulation';
+export { default as DoorRoomPage } from './DoorRoomPage';

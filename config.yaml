@@ -10,7 +10,7 @@ app:
 
 # Firebase Configuration
 firebase:
-  credentials_path: "firebase-service-account.json"
+  credentials_path: "face-recognition-27d15-firebase-adminsdk-fbsvc-d6c453e325.json"
   project_id: "face-recognition-27d15"
   storage_bucket: "face-recognition-27d15.firebasestorage.app"
 

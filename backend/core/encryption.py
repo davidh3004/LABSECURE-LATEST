@@ -4,6 +4,7 @@ Encrypts and decrypts biometric face encodings for secure storage in Firestore.
 """
 
 import os
+import sys
 import base64
 import hashlib
 import hmac
@@ -11,6 +12,23 @@ from typing import Optional
 
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
+
+
+def _load_key_from_windows_registry() -> Optional[str]:
+    """
+    Fallback for Windows: read LABSECURE_MASTER_KEY from the user's registry
+    (HKCU\\Environment). Needed because processes launched from a terminal that
+    predates `setx` / SetEnvironmentVariable won't have the var in os.environ.
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+            value, _ = winreg.QueryValueEx(key, "LABSECURE_MASTER_KEY")
+            return value or None
+    except OSError:
+        return None
 
 
 class BiometricEncryptor:
@@ -39,7 +57,7 @@ class BiometricEncryptor:
         if master_key:
             self._master_key = master_key
         else:
-            key_hex = os.environ.get("LABSECURE_MASTER_KEY")
+            key_hex = os.environ.get("LABSECURE_MASTER_KEY") or _load_key_from_windows_registry()
             if not key_hex:
                 raise ValueError(
                     "No encryption key provided. Set LABSECURE_MASTER_KEY environment variable "

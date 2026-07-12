@@ -24,6 +24,7 @@ frontend/dist/
 
 # Sensitive Firebase credentials
 firebase-service-account.json
+*firebase-adminsdk*.json
 
 # IDEs and OS metadata
 .vscode/

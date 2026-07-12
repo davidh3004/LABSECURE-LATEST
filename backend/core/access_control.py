@@ -216,8 +216,10 @@ class AccessController:
                 if day_name not in schedule.days:
                     continue
 
-                # Check time window
-                if schedule.start_time <= current_time_str <= schedule.end_time:
+                # Check time window (supports per-day hours)
+                from backend.utils.schedule_utils import get_schedule_window_for_day
+                start_time, end_time = get_schedule_window_for_day(schedule, day_name)
+                if start_time <= current_time_str <= end_time:
                     # Check if user is in overrides (explicit include)
                     if user_id in schedule.user_overrides:
                         return True

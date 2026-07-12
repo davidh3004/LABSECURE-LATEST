@@ -125,12 +125,37 @@ async def enroll_face(user_id: str, photo: UploadFile = File(...)):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # Check biometric consent
+    if not getattr(user, "biometric_consent", False):
+        raise HTTPException(
+            status_code=400,
+            detail="Biometric enrollment denied. Consent form has not been signed for this user."
+        )
+
     # Read photo bytes (fast — no inference yet)
     image_bytes = await photo.read()
     nparr = np.frombuffer(image_bytes, np.uint8)
     frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     if frame is None:
         raise HTTPException(status_code=400, detail="Could not decode image — ensure it is a valid JPEG/PNG.")
+
+    # Calculate image brightness
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    mean_brightness = gray.mean()
+    if mean_brightness < 40:
+        raise HTTPException(status_code=422, detail="Face photo is too dark. Please provide a well-lit photo.")
+    if mean_brightness > 220:
+        raise HTTPException(status_code=422, detail="Face photo is overexposed. Please reduce bright lighting.")
+
+    # Calculate image sharpness (Laplacian variance).
+    # Threshold 50: typical laptop webcams produce ~80 on a normal in-focus
+    # frame, so the original threshold of 100 rejected every capture.
+    sharpness = cv2.Laplacian(gray, cv2.CV_64F).var()
+    if sharpness < 50:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Face photo is too blurry (sharpness {sharpness:.0f}, need 50+). Please take a clearer picture.",
+        )
 
     pipeline = dependencies.vision_pipeline
     if pipeline is None:
@@ -156,9 +181,15 @@ async def enroll_face(user_id: str, photo: UploadFile = File(...)):
 
     desc_list: list[float] = embedding.tolist()
 
-    # Save 512-dim descriptor to Firestore
+    # Save 512-dim descriptor to Firestore (encrypted at rest)
     blob_path = f"face_photos/{user_id}/photo.jpg"
-    UserRepository.update_face_data(user_id, desc_list, blob_path)
+    try:
+        UserRepository.update_face_data(user_id, desc_list, blob_path)
+    except ValueError as key_err:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Biometric encryption unavailable: {key_err}",
+        )
     log.info(f"Saved 512-dim face descriptor for user {user_id}")
 
     # Hot-reload pipeline database (so recognition works immediately, no restart needed)

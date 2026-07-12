@@ -105,6 +105,9 @@ class VisionPipeline:
 
         # Latest frame cache per camera (for snapshot endpoint, never consumed)
         self._latest_frame_cache: dict[str, 'AnnotatedFrame'] = {}
+        # Latest raw frame (no overlays, full resolution) — used for enrollment
+        # photo capture from backend cameras.
+        self._latest_raw_frame_cache: dict[str, np.ndarray] = {}
 
         # Shared output queue for WebSocket broadcast
         self.output_queue: queue.Queue = queue.Queue(maxsize=30)
@@ -200,6 +203,14 @@ class VisionPipeline:
         """Get the latest frame without consuming from the queue (for HTTP snapshot)."""
         return self._latest_frame_cache.get(camera_id)
 
+    def get_raw_snapshot_jpeg(self, camera_id: str, quality: int = 90) -> Optional[bytes]:
+        """Get the latest raw frame (no annotation overlays, full resolution) as JPEG."""
+        frame = self._latest_raw_frame_cache.get(camera_id)
+        if frame is None:
+            return None
+        _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+        return buffer.tobytes()
+
     def get_camera_health(self) -> list[dict]:
         """Get health status for all cameras."""
         return [cam.get_health() for cam in self._cameras]
@@ -244,6 +255,7 @@ class VisionPipeline:
         # Removing from _frame_queues signals the display/detection threads to stop
         self._frame_queues.pop(camera_id, None)
         self._latest_frame_cache.pop(camera_id, None)
+        self._latest_raw_frame_cache.pop(camera_id, None)
         self._latest_annotations.pop(camera_id, None)
         self._annotation_locks.pop(camera_id, None)
         self._detection_frames.pop(camera_id, None)
@@ -301,6 +313,9 @@ class VisionPipeline:
             # Submit frame for detection (non-blocking overwrite)
             with self._detection_frame_locks[cam_id]:
                 self._detection_frames[cam_id] = frame
+
+            # Cache raw frame before any overlays/downscaling (for enrollment capture)
+            self._latest_raw_frame_cache[cam_id] = frame
 
             # Read cached annotations (non-blocking)
             with self._annotation_locks[cam_id]:
@@ -365,6 +380,7 @@ class VisionPipeline:
         tracker = self._trackers[cam_id]
         detection_count = 0
         heartbeat_time = time.time()
+        last_empty_db_warning = 0.0
 
         logger.info(f"[{cam_id}] Detection thread started")
 
@@ -413,7 +429,15 @@ class VisionPipeline:
                         if embedding is None:
                             logger.warning(f"[{cam_id}] Face embedding is None!")
                         elif not self.face_database:
-                            logger.warning(f"[{cam_id}] Face database is empty!")
+                            # Rate-limit: this fires on every recognition attempt, so
+                            # without throttling it floods the log several times per second.
+                            if now - last_empty_db_warning >= 30.0:
+                                logger.warning(
+                                    f"[{cam_id}] Face database is empty — no users enrolled with "
+                                    f"512-dim descriptors. Enroll faces via the Users page. "
+                                    f"(This warning is shown at most once every 30s.)"
+                                )
+                                last_empty_db_warning = now
                         else:
                             compatible_db = {
                                 uid: db_emb
@@ -478,9 +502,6 @@ class VisionPipeline:
                 time.sleep(0.08)
 
             except Exception as e:
-                import traceback
-                with open("c:/Users/janna/Downloads/labsecure-ai-v2 2/labsecure-ai-v2/debug_output.txt", "a") as f:
-                    f.write(f"[{cam_id}] Detection error: {e}\n{traceback.format_exc()}\n")
                 logger.error(f"[{cam_id}] Detection error: {e}", exc_info=True)
                 time.sleep(0.2)
 

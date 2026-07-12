@@ -70,7 +70,7 @@ export default function GuestsPage() {
 
     return (
         <div>
-            <div className="flex items-center justify-between mb-6">
+            <div className="page-toolbar">
                 <div className="flex items-center gap-3">
                     <button className={`btn ${showExpired ? 'btn-primary' : 'btn-secondary'} btn-sm`}
                         onClick={() => setShowExpired(!showExpired)}>
@@ -85,7 +85,7 @@ export default function GuestsPage() {
                 </button>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
+            <div className="responsive-card-grid">
                 {guests.map(guest => (
                     <div key={guest.id} className="card">
                         <div className="card-header">
@@ -163,7 +163,7 @@ export default function GuestsPage() {
                             </div>
 
 
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                            <div className="modal-form-grid">
                                 <div className="form-group">
                                     <label className="form-label">Valid From</label>
                                     <input className="form-input" type="datetime-local" value={form.valid_from}

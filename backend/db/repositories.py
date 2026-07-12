@@ -84,6 +84,8 @@ class UserRepository:
             student_id=data.student_id,
             role=data.role,
             active=data.active,
+            biometric_consent=data.biometric_consent,
+            consent_timestamp=data.consent_timestamp,
             created_at=now,
             updated_at=now,
         )
@@ -131,8 +133,18 @@ class UserRepository:
     @staticmethod
     def update_face_data(user_id: str, descriptor: list[float], photo_ref: str):
         db = get_firestore()
+        from backend.core.encryption import BiometricEncryptor
+        import numpy as np
+        from google.cloud import firestore
+
+        encryptor = BiometricEncryptor()
+        embedding_arr = np.array(descriptor, dtype=np.float32)
+        serialized = BiometricEncryptor.serialize_embedding(embedding_arr)
+        encrypted_payload = encryptor.encrypt(serialized)
+
         db.collection(UserRepository.COLLECTION).document(user_id).update({
-            "face_descriptor": descriptor,
+            "face_descriptor_encrypted": encrypted_payload,
+            "face_descriptor": firestore.DELETE_FIELD,
             "face_encoding_ref": photo_ref,
             "updated_at": _now(),
         })
@@ -150,14 +162,39 @@ class UserRepository:
         db = get_firestore()
         docs = db.collection(UserRepository.COLLECTION).stream()
         result = []
+
+        from backend.core.encryption import BiometricEncryptor
+
+        encryptor = None
+        try:
+            encryptor = BiometricEncryptor()
+        except Exception as e:
+            logger.error(f"Cannot initialize BiometricEncryptor for loading: {e}")
+
         for doc in docs:
             data = doc.to_dict()
-            if data.get("face_descriptor"):
+            descriptor = None
+
+            # Prefer the encrypted template when available
+            if "face_descriptor_encrypted" in data and encryptor:
+                try:
+                    payload = data["face_descriptor_encrypted"]
+                    decrypted_bytes = encryptor.decrypt(payload)
+                    descriptor_arr = BiometricEncryptor.deserialize_embedding(decrypted_bytes)
+                    descriptor = descriptor_arr.tolist()
+                except Exception as dec_err:
+                    logger.error(f"Failed to decrypt descriptor for user {doc.id}: {dec_err}")
+                    continue
+            # Fallback to legacy unencrypted field
+            elif "face_descriptor" in data:
+                descriptor = data["face_descriptor"]
+
+            if descriptor:
                 result.append({
                     "user_id": doc.id,
                     "name": data.get("name", "Unknown"),
                     "role": data.get("role", ""),
-                    "descriptor": data["face_descriptor"],
+                    "descriptor": descriptor,
                 })
         cache.set(cache_key, result, CACHE_TTL["users"])
         return result
@@ -216,6 +253,7 @@ class ScheduleRepository:
             days=data.days,
             start_time=data.start_time,
             end_time=data.end_time,
+            day_times=data.day_times,
             roles=[r.value if hasattr(r, "value") else r for r in data.roles],
             user_overrides=data.user_overrides,
             room_id=data.room_id,
@@ -238,6 +276,11 @@ class ScheduleRepository:
         updates = data.model_dump(exclude_none=True)
         if "roles" in updates:
             updates["roles"] = [r.value if hasattr(r, "value") else r for r in updates["roles"]]
+        if "day_times" in updates and updates["day_times"] is not None:
+            updates["day_times"] = {
+                day: (w if isinstance(w, dict) else w)
+                for day, w in updates["day_times"].items()
+            }
         doc_ref.update(updates)
         get_cache().invalidate_prefix(ScheduleRepository._CACHE_PREFIX)
         return ScheduleRepository.get_by_id(schedule_id)
@@ -455,11 +498,19 @@ class GuestRepository:
     @staticmethod
     def update_face_data(guest_id: str, descriptor: list[float], ref_path: str):
         db = get_firestore()
-        # Compress descriptor array to a comma-separated string to save Space/bandwidth
-        desc_str = ",".join(f"{x:.4f}" for x in descriptor)
+        from backend.core.encryption import BiometricEncryptor
+        import numpy as np
+        from google.cloud import firestore
+
+        encryptor = BiometricEncryptor()
+        embedding_arr = np.array(descriptor, dtype=np.float32)
+        serialized = BiometricEncryptor.serialize_embedding(embedding_arr)
+        encrypted_payload = encryptor.encrypt(serialized)
+
         db.collection(GuestRepository.COLLECTION).document(guest_id).update({
             "face_encoding_ref": ref_path,
-            "face_descriptor": desc_str,
+            "face_descriptor_encrypted": encrypted_payload,
+            "face_descriptor": firestore.DELETE_FIELD,
         })
         get_cache().invalidate_prefix(GuestRepository._CACHE_PREFIX)
 

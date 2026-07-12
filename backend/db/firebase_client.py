@@ -18,6 +18,21 @@ _db = None
 _bucket = None
 
 
+def _resolve_credentials_path(credentials_path: Optional[str] = None) -> str:
+    """Resolve the Firebase service-account JSON path from config or env."""
+    fb_config = get_config("firebase")
+    cred_path = credentials_path or fb_config.get("credentials_path", "")
+
+    if not cred_path or cred_path.startswith("${"):
+        cred_path = os.environ.get("FIREBASE_CREDENTIALS_PATH", "")
+
+    if cred_path and not Path(cred_path).is_absolute():
+        project_root = Path(__file__).parent.parent.parent
+        cred_path = str(project_root / cred_path)
+
+    return cred_path
+
+
 def init_firebase(credentials_path: Optional[str] = None, project_id: Optional[str] = None):
     """
     Initialize Firebase Admin SDK.
@@ -28,16 +43,13 @@ def init_firebase(credentials_path: Optional[str] = None, project_id: Optional[s
     """
     global _app, _db, _bucket
 
-    if _app is not None:
+    if _db is not None:
         return
 
     fb_config = get_config("firebase")
-    cred_path = credentials_path or fb_config.get("credentials_path", "")
+    cred_path = _resolve_credentials_path(credentials_path)
     proj_id = project_id or fb_config.get("project_id", "")
     bucket_name = fb_config.get("storage_bucket", "")
-
-    if not cred_path or cred_path.startswith("${"):
-        cred_path = os.environ.get("FIREBASE_CREDENTIALS_PATH", "")
 
     if not proj_id or proj_id.startswith("${"):
         proj_id = os.environ.get("FIREBASE_PROJECT_ID", "")
@@ -45,11 +57,14 @@ def init_firebase(credentials_path: Optional[str] = None, project_id: Optional[s
     if not bucket_name or bucket_name.startswith("${"):
         bucket_name = os.environ.get("FIREBASE_STORAGE_BUCKET", "")
 
-    if cred_path and Path(cred_path).exists():
-        cred = credentials.Certificate(cred_path)
-    else:
-        # Use Application Default Credentials
-        cred = credentials.ApplicationDefault()
+    if not cred_path or not Path(cred_path).exists():
+        raise FileNotFoundError(
+            "Firebase credentials not found. Download your service account JSON from "
+            "Firebase Console and save it as 'firebase-service-account.json' in the "
+            "project root (or set FIREBASE_CREDENTIALS_PATH)."
+        )
+
+    cred = credentials.Certificate(cred_path)
 
     options = {}
     if proj_id:
@@ -68,6 +83,8 @@ def get_firestore():
     global _db
     if _db is None:
         init_firebase()
+    if _db is None:
+        raise RuntimeError("Firestore client failed to initialize")
     return _db
 
 

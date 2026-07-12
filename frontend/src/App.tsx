@@ -1,24 +1,38 @@
 /* App.tsx — Root Application with Router, Layout, and Role-Based Access */
 
-import { BrowserRouter, Routes, Route, NavLink, useLocation } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, NavLink, useLocation, Navigate, useNavigate } from 'react-router-dom';
+import { useState, useEffect, useCallback } from 'react';
 import {
     LayoutDashboard, Users, Calendar, Shield, ScrollText,
-    UserPlus, Camera, AlertTriangle, ShieldAlert, DoorOpen, Lock
+    UserPlus, Camera, AlertTriangle, ShieldAlert, DoorOpen, Lock, Menu
 } from 'lucide-react';
 import { emergencyApi } from './api/client';
 import { MOCK_ENABLED } from './api/mock';
-import { ConfirmHost } from './components/ui/ConfirmDialog';
+import { ConfirmHost, confirmDialog } from './components/ui/ConfirmDialog';
 import { ToastHost } from './components/ui/Toast';
+import { clearSession, getStoredRole, isSessionValid } from './api/authSession';
 import type { SystemState } from './api/types';
 
 import {
     Dashboard, InsightsDashboard, UsersPage, SchedulePage, PermissionsPage,
     EventsPage, GuestsPage, CameraHealthPage, EmergencyPage, RoomsPage,
-    LoginPage, AdminsPage, DoorSimulationPage,
+    LoginPage, AdminsPage, DoorSimulationPage, DoorRoomPage,
 } from './pages';
 
 type UserRole = 'admin' | 'teacher';
+
+function useIsNarrow() {
+    const [narrow, setNarrow] = useState(() =>
+        typeof window !== 'undefined' && window.matchMedia('(max-width: 520px)').matches
+    );
+    useEffect(() => {
+        const mq = window.matchMedia('(max-width: 520px)');
+        const handler = () => setNarrow(mq.matches);
+        mq.addEventListener('change', handler);
+        return () => mq.removeEventListener('change', handler);
+    }, []);
+    return narrow;
+}
 
 // Pages teachers can access
 const TEACHER_ALLOWED_PATHS = ['/schedule'];
@@ -75,12 +89,12 @@ function AccessRestricted() {
     );
 }
 
-function Sidebar({ role }: { role: UserRole }) {
+function Sidebar({ role, isOpen, onClose }: { role: UserRole; isOpen: boolean; onClose: () => void }) {
     return (
-        <aside className="sidebar">
+        <aside className={`sidebar ${isOpen ? 'open' : ''}`}>
             <div className="sidebar-header">
                 <div className="sidebar-logo">LS</div>
-                <div>
+                <div style={{ flex: 1 }}>
                     <div className="sidebar-title">LabSecure AI</div>
                     <div className="sidebar-subtitle">v2.0 — Telematics Lab</div>
                 </div>
@@ -100,6 +114,7 @@ function Sidebar({ role }: { role: UserRole }) {
                                     to={item.path}
                                     end={item.path === '/'}
                                     className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+                                    onClick={onClose}
                                 >
                                     <item.icon />
                                     {item.label}
@@ -113,22 +128,26 @@ function Sidebar({ role }: { role: UserRole }) {
     );
 }
 
-function PageTitle() {
+function PageTitle({ compact }: { compact?: boolean }) {
     const location = useLocation();
+    const doorRoomMatch = location.pathname.match(/^\/doors\/([^/]+)$/);
     const titles: Record<string, string> = {
-        '/': 'Security Dashboard',
+        '/': compact ? 'Dashboard' : 'Security Dashboard',
         '/feed': 'Camera Feed',
-        '/events': 'Event Log Center',
-        '/cameras': 'Camera & Network Health',
-        '/rooms': 'Room Management',
+        '/events': compact ? 'Events' : 'Event Log Center',
+        '/cameras': compact ? 'Cameras' : 'Camera & Network Health',
+        '/rooms': compact ? 'Rooms' : 'Room Management',
         '/doors': 'Door Simulation',
-        '/users': 'User Management',
-        '/schedule': 'Access Schedules',
-        '/permissions': 'Permission Matrix',
+        '/users': compact ? 'Users' : 'User Management',
+        '/schedule': compact ? 'Schedules' : 'Access Schedules',
+        '/permissions': compact ? 'Permissions' : 'Permission Matrix',
         '/guests': 'Guest Access',
-        '/emergency': 'Emergency Control',
-        '/admins': 'Admin Accounts',
+        '/emergency': compact ? 'Emergency' : 'Emergency Control',
+        '/admins': compact ? 'Admins' : 'Admin Accounts',
     };
+    if (doorRoomMatch) {
+        return <>Room Door</>;
+    }
     return <>{titles[location.pathname] || 'LabSecure AI v2'}</>;
 }
 
@@ -138,10 +157,39 @@ function Guarded({ children, role }: { children: React.ReactNode; role: UserRole
     return <>{children}</>;
 }
 
+/** Redirect teachers away from pages they cannot access */
+function TeacherRouteGuard({ role, children }: { role: UserRole; children: React.ReactNode }) {
+    const location = useLocation();
+    if (role === 'teacher' && !TEACHER_ALLOWED_PATHS.includes(location.pathname)) {
+        return <Navigate to="/schedule" replace />;
+    }
+    return <>{children}</>;
+}
+
 function AppContent() {
-    const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('admin_token'));
-    const [role, setRole] = useState<UserRole>((localStorage.getItem('admin_role') as UserRole) || 'admin');
+    const navigate = useNavigate();
+    const [isAuthenticated, setIsAuthenticated] = useState(isSessionValid);
+    const [role, setRole] = useState<UserRole>(getStoredRole);
     const [emergency, setEmergency] = useState<SystemState | null>(null);
+    const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+    const isNarrow = useIsNarrow();
+
+    const expireSession = useCallback(() => {
+        clearSession();
+        setIsAuthenticated(false);
+    }, []);
+
+    useEffect(() => {
+        if (!isAuthenticated) return;
+
+        const checkExpiry = () => {
+            if (!isSessionValid()) expireSession();
+        };
+
+        checkExpiry();
+        const interval = setInterval(checkExpiry, 30000);
+        return () => clearInterval(interval);
+    }, [isAuthenticated, expireSession]);
 
     useEffect(() => {
         if (!isAuthenticated) return;
@@ -151,22 +199,35 @@ function AppContent() {
         return () => clearInterval(interval);
     }, [isAuthenticated]);
 
-    const handleLogout = () => {
-        localStorage.removeItem('admin_token');
-        localStorage.removeItem('admin_role');
+    const handleLogout = async () => {
+        const confirmed = await confirmDialog({
+            title: 'Log out?',
+            message: 'Are you sure you want to end your session?',
+            confirmLabel: 'Log out',
+            cancelLabel: 'Stay signed in',
+            danger: true,
+        });
+        if (!confirmed) return;
+        clearSession();
         setIsAuthenticated(false);
     };
 
     if (!isAuthenticated) {
-        return <LoginPage onLoginSuccess={() => {
-            setRole((localStorage.getItem('admin_role') as UserRole) || 'admin');
+        return <LoginPage onLoginSuccess={(_token, loginRole) => {
+            setRole(loginRole as UserRole);
             setIsAuthenticated(true);
+            if (loginRole === 'teacher') {
+                navigate('/schedule', { replace: true });
+            }
         }} />;
     }
 
     return (
         <div className="app-layout">
-            <Sidebar role={role} />
+            {isSidebarOpen && (
+                <div className="sidebar-overlay" onClick={() => setIsSidebarOpen(false)} />
+            )}
+            <Sidebar role={role} isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
             <main className="main-content">
                 {emergency?.emergency_lock && (
                     <div className="emergency-banner">
@@ -175,8 +236,11 @@ function AppContent() {
                     </div>
                 )}
                 <header className="top-bar">
-                    <div className="top-bar-left">
-                        <h1 className="top-bar-title"><PageTitle /></h1>
+                    <div className="top-bar-left" style={{ display: 'flex', alignItems: 'center' }}>
+                        <button className="menu-toggle-btn" onClick={() => setIsSidebarOpen(true)} aria-label="Open menu">
+                            <Menu size={22} />
+                        </button>
+                        <h1 className="top-bar-title"><PageTitle compact={isNarrow} /></h1>
                     </div>
                     <div className="top-bar-right" style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                         {MOCK_ENABLED && (
@@ -198,21 +262,26 @@ function AppContent() {
                                 <option value="teacher">👩‍🏫 Teacher (mock)</option>
                             </select>
                         )}
-                        <span className={`badge ${role === 'teacher' ? 'badge-warning' : 'badge-success'}`}>
+                        <span className={`badge top-bar-role-badge ${role === 'teacher' ? 'badge-warning' : 'badge-success'}`}>
                             {role === 'teacher' ? '👩‍🏫 Teacher' : '🔑 Admin'}
                         </span>
-                        <span className="badge badge-success">
+                        <span className="badge badge-success top-bar-status-badge">
                             <span className="status-dot online" />
                             System Online
                         </span>
-                        <button className="btn btn-ghost btn-sm" onClick={handleLogout} style={{ color: 'var(--color-danger)' }}>
+                        <button className="btn btn-ghost btn-sm top-bar-logout" onClick={handleLogout} style={{ color: 'var(--color-danger)' }}>
                             Logout
                         </button>
                     </div>
                 </header>
                 <div className="page-content">
+                    <TeacherRouteGuard role={role}>
                     <Routes>
-                        <Route path="/" element={<Guarded role={role}><InsightsDashboard /></Guarded>} />
+                        <Route path="/" element={
+                            role === 'teacher'
+                                ? <Navigate to="/schedule" replace />
+                                : <Guarded role={role}><InsightsDashboard /></Guarded>
+                        } />
                         <Route path="/feed" element={<Guarded role={role}><Dashboard /></Guarded>} />
                         <Route path="/rooms" element={<Guarded role={role}><RoomsPage /></Guarded>} />
                         <Route path="/users" element={<Guarded role={role}><UsersPage /></Guarded>} />
@@ -224,7 +293,9 @@ function AppContent() {
                         <Route path="/emergency" element={<Guarded role={role}><EmergencyPage /></Guarded>} />
                         <Route path="/admins" element={<Guarded role={role}><AdminsPage /></Guarded>} />
                         <Route path="/doors" element={<Guarded role={role}><DoorSimulationPage /></Guarded>} />
+                        <Route path="/doors/:roomId" element={<Guarded role={role}><DoorRoomPage /></Guarded>} />
                     </Routes>
+                    </TeacherRouteGuard>
                 </div>
             </main>
         </div>

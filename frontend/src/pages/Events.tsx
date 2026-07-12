@@ -169,7 +169,7 @@ export default function EventsPage() {
             </div>
 
             {/* Filters */}
-            <div className="flex items-center justify-between mb-4">
+            <div className="page-toolbar">
                 <div className="filter-bar">
                     <select className="form-select" value={filters.type}
                         onChange={e => setFilters({ ...filters, type: e.target.value })}>
@@ -225,7 +225,7 @@ export default function EventsPage() {
                         <option value="critical">Critical</option>
                     </select>
                 </div>
-                <div className="flex gap-2">
+                <div className="page-toolbar-actions">
                     <button className={`btn ${autoRefresh ? 'btn-primary' : 'btn-secondary'} btn-sm`}
                         onClick={() => setAutoRefresh(!autoRefresh)}>
                         <RefreshCw size={14} className={autoRefresh ? 'spin' : ''} />

@@ -95,7 +95,7 @@ export default function CameraHealthPage() {
     return (
         <div>
             {/* Header */}
-            <div className="flex items-center justify-between mb-6">
+            <div className="page-toolbar">
                 <div className="flex items-center gap-3">
                     <Server size={20} style={{ color: 'var(--text-accent)' }} />
                     <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>

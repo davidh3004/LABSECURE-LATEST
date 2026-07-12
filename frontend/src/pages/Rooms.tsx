@@ -69,7 +69,7 @@ export default function RoomsPage() {
     return (
         <div>
             {/* Header */}
-            <div className="flex items-center justify-between mb-4">
+            <div className="page-toolbar">
                 <div style={{ color: 'var(--text-tertiary)', fontSize: 14 }}>
                     {rooms.length} room{rooms.length !== 1 ? 's' : ''} configured
                 </div>
@@ -90,7 +90,7 @@ export default function RoomsPage() {
                     </div>
                 </div>
             ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 16 }}>
+                <div className="responsive-card-grid">
                     {rooms.map(room => {
                         const roomCameras = getCamerasForRoom(room.id);
                         const roomSchedules = getSchedulesForRoom(room.id);

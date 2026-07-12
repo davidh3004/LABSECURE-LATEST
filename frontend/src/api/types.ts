@@ -22,6 +22,8 @@ export interface User {
     student_id: string;
     role: UserRole;
     active: boolean;
+    biometric_consent?: boolean;
+    consent_timestamp?: string;
     face_encoding_ref?: string;
     created_at?: string;
     updated_at?: string;
@@ -32,6 +34,13 @@ export interface UserCreate {
     student_id: string;
     role: UserRole;
     active: boolean;
+    biometric_consent?: boolean;
+    consent_timestamp?: string;
+}
+
+export interface DayTimeWindow {
+    start_time: string;
+    end_time: string;
 }
 
 export interface Schedule {
@@ -40,6 +49,8 @@ export interface Schedule {
     days: string[];
     start_time: string;
     end_time: string;
+    /** Per-day hours. When set for a day, overrides global start/end for that day. */
+    day_times?: Record<string, DayTimeWindow>;
     roles: string[];
     user_overrides: string[];
     room_id?: string;
@@ -52,6 +63,7 @@ export interface ScheduleCreate {
     days: string[];
     start_time: string;
     end_time: string;
+    day_times?: Record<string, DayTimeWindow>;
     roles: string[];
     user_overrides: string[];
     room_id?: string;

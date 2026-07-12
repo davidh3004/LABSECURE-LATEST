@@ -27,17 +27,15 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-    # --- Force Python 3.11 on Windows directly ---
-    if not sys.executable.endswith("3.11\\python.exe") and ".venv" not in sys.executable:
-        if "FORCE_PY311_RESTART" not in os.environ:
-            import shutil
-            py_launcher = shutil.which("py")
-            if py_launcher:
-                print("[INFO] Re-invoking using Python 3.11 launcher...")
-                os.environ["FORCE_PY311_RESTART"] = "1"
-                # Replace the current process image to avoid nested launcher shell wrappers (quote path for spaces)
-                os.execv(py_launcher, [py_launcher, "-3.11", f'"{__file__}"'])
-                sys.exit(0)
+    # --- Re-invoke via project venv on Windows if not already using it ---
+    _project_root = os.path.dirname(os.path.abspath(__file__))
+    _venv_python = os.path.join(_project_root, ".venv", "Scripts", "python.exe")
+    if ".venv" not in sys.executable and os.path.exists(_venv_python):
+        if "FORCE_VENV_RESTART" not in os.environ:
+            print("[INFO] Re-invoking using project virtual environment...")
+            os.environ["FORCE_VENV_RESTART"] = "1"
+            os.execv(_venv_python, [_venv_python, __file__] + sys.argv[1:])
+            sys.exit(0)
 
 # ── Configuration ──────────────────────────────────────────
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -52,6 +50,7 @@ FRONTEND_PORT = 5173
 
 # Track child processes for clean shutdown
 _processes = []
+_ngrok_proc = None
 
 
 def get_venv_python():
@@ -139,6 +138,30 @@ def ensure_requirements():
     print("   ✓ Dependencies installed")
 
 
+def get_lan_ipv4():
+    """Best-effort LAN IPv4 for Pico / hardware clients (not 127.0.0.1)."""
+    import socket
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(0.3)
+        sock.connect(("8.8.8.8", 80))
+        ip = sock.getsockname()[0]
+        sock.close()
+        if ip and not ip.startswith("127."):
+            return ip
+    except Exception:
+        pass
+    try:
+        import socket as _s
+        for info in _s.getaddrinfo(_s.gethostname(), None, _s.AF_INET):
+            ip = info[4][0]
+            if ip and not ip.startswith("127."):
+                return ip
+    except Exception:
+        pass
+    return None
+
+
 def kill_port(port):
     """Kill any process listening on the given port."""
     try:
@@ -177,6 +200,7 @@ def start_backend():
             "--host", BACKEND_HOST,
             "--port", str(BACKEND_PORT),
             "--reload",
+            "--reload-dir", "backend",
         ],
         cwd=PROJECT_ROOT,
         env=env,
@@ -201,10 +225,27 @@ def start_frontend():
     return proc
 
 
+def _ngrok_failure_hint(log_path: str) -> str:
+    """Return a short hint if ngrok.log shows a known failure."""
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            log = f.read()
+        if "not authenticated" in log or "ERR_NGROK_4018" in log:
+            return (
+                "Ngrok needs an authtoken. Run:\n"
+                "      ngrok config add-authtoken YOUR_TOKEN\n"
+                "   Get one at https://dashboard.ngrok.com/get-started/your-authtoken"
+            )
+    except Exception:
+        pass
+    return "See ngrok.log in the project root for details."
+
+
 def start_ngrok():
-    """Launch ngrok tunnel to the frontend."""
+    """Launch ngrok tunnel to the frontend (optional — failure won't stop other services)."""
+    global _ngrok_proc
     kill_port(4040)  # ngrok admin port
-    print("🚀 Starting ngrok tunnel...")
+    print("🚀 Starting ngrok tunnel (optional)...")
     log_path = os.path.join(PROJECT_ROOT, "ngrok.log")
     log_file = open(log_path, "w")
     
@@ -220,10 +261,15 @@ def start_ngrok():
         stderr=subprocess.STDOUT,
         preexec_fn=os.setsid if os.name == 'posix' else None,
     )
-    _processes.append(proc)
+    _ngrok_proc = proc
 
     # Wait for ngrok to start and get the public URL
     for _ in range(10):
+        if proc.poll() is not None:
+            print("   ⚠️  Ngrok exited early — local dev will continue without a public URL.")
+            print(f"   {_ngrok_failure_hint(log_path)}")
+            _ngrok_proc = None
+            return None
         time.sleep(1)
         try:
             req = urllib.request.Request("http://localhost:4040/api/tunnels")
@@ -237,6 +283,12 @@ def start_ngrok():
         except Exception:
             pass
 
+    if proc.poll() is not None:
+        print("   ⚠️  Ngrok exited — local dev will continue without a public URL.")
+        print(f"   {_ngrok_failure_hint(log_path)}")
+        _ngrok_proc = None
+        return None
+
     print("   ⚠️  Ngrok started but couldn't fetch URL. Check http://localhost:4040")
     return proc
 
@@ -244,7 +296,10 @@ def start_ngrok():
 def shutdown(signum=None, frame=None):
     """Gracefully stop all services."""
     print("\n\n🛑 Shutting down all services...")
-    for proc in reversed(_processes):
+    all_procs = list(_processes)
+    if _ngrok_proc is not None:
+        all_procs.append(_ngrok_proc)
+    for proc in reversed(all_procs):
         try:
             if os.name == 'posix':
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
@@ -258,11 +313,11 @@ def shutdown(signum=None, frame=None):
             
     # Wait max 6 seconds for graceful exit
     start_wait = time.time()
-    for proc in reversed(_processes):
+    for proc in reversed(all_procs):
         while proc.poll() is None and time.time() - start_wait < 6:
             time.sleep(0.1)
 
-    for proc in reversed(_processes):
+    for proc in reversed(all_procs):
         if proc.poll() is None:
             try:
                 if os.name == 'posix':
@@ -309,17 +364,33 @@ if __name__ == "__main__":
         print("  ✅ All services running!")
         print(f"  Backend:  http://localhost:{BACKEND_PORT}")
         print(f"  Frontend: http://localhost:{FRONTEND_PORT}")
-        print("  Ngrok:    Check URL above ☝️")
+        lan_ip = get_lan_ipv4()
+        if lan_ip:
+            print(f"  LAN IP:   {lan_ip}  ← set this in pico_servo_control.py BACKEND_URL")
+            print(f"  Pico API: http://{lan_ip}:{BACKEND_PORT}/api/doors/hardware/state")
+        if _ngrok_proc is not None and _ngrok_proc.poll() is None:
+            print("  Ngrok:    Check URL above")
+        else:
+            print("  Ngrok:    skipped (optional — local URLs work fine)")
         print()
         print("  Press Ctrl+C to stop everything")
         print("=" * 55)
 
-        # Keep the script alive, waiting for child processes
+        ngrok_exit_warned = False
+
+        # Keep the script alive; only backend/frontend exits are fatal
         while True:
             for proc in _processes:
                 if proc.poll() is not None:
                     print(f"\n⚠️  A service exited unexpectedly (PID {proc.pid})")
                     shutdown()
+            if (
+                not ngrok_exit_warned
+                and _ngrok_proc is not None
+                and _ngrok_proc.poll() is not None
+            ):
+                ngrok_exit_warned = True
+                print("\n⚠️  Ngrok stopped (backend and frontend still running).")
             time.sleep(1)
 
     except KeyboardInterrupt:

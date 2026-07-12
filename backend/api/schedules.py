@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException
 from backend.db.schemas import ScheduleModel, ScheduleCreate, ScheduleUpdate, EventCreate, EventType, EventSeverity, PermissionCreate
 from backend.db.repositories import ScheduleRepository, EventRepository, UserRepository, PermissionRepository
 from backend.utils.sim_clock import sim_clock
+from backend.utils.schedule_utils import get_schedule_window_for_day
 
 router = APIRouter(prefix="/api/schedules", tags=["Schedules"])
 
@@ -132,26 +133,14 @@ def get_attendance_sessions(schedule_id: str):
     if to_ts.tzinfo is None:
         to_ts = to_ts.replace(tzinfo=timezone.utc)
 
-    # Fetch raw events and filter in-memory to avoid Firestore composite index requirement
-    raw_events = EventRepository.query(limit=5000)
-    events = []
-    for event in raw_events:
-        if event.type != "access_granted":
-            continue
-        ts = event.timestamp
-        if not ts:
-            continue
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
-        if from_ts <= ts <= to_ts:
-            events.append(event)
+    events = EventRepository.query(
+        event_type="access_granted",
+        from_time=from_ts,
+        to_time=to_ts,
+        limit=5000,
+    )
 
-    start_h, start_m = map(int, schedule.start_time.split(':'))
-    end_h, end_m = map(int, schedule.end_time.split(':'))
-    start_minutes = start_h * 60 + start_m
-    end_minutes = end_h * 60 + end_m
-
-    # Group distinct user_ids per matching date
+    # Group distinct user_ids per matching date (using that day's time window)
     attendance_by_date: dict[str, set] = {}
     for event in events:
         if not event.timestamp:
@@ -163,6 +152,12 @@ def get_attendance_sessions(schedule_id: str):
         day_name = ts.strftime('%A').lower()
         if day_name not in schedule.days:
             continue
+
+        start_time, end_time = get_schedule_window_for_day(schedule, day_name)
+        start_h, start_m = map(int, start_time.split(':'))
+        end_h, end_m = map(int, end_time.split(':'))
+        start_minutes = start_h * 60 + start_m
+        end_minutes = end_h * 60 + end_m
 
         event_minutes = ts.hour * 60 + ts.minute
         if not (start_minutes <= event_minutes < end_minutes):
@@ -209,28 +204,22 @@ def get_attendance(schedule_id: str, date: Optional[str] = None):
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format, use YYYY-MM-DD")
 
-    start_h, start_m = map(int, schedule.start_time.split(':'))
-    end_h, end_m = map(int, schedule.end_time.split(':'))
+    day_name = target_date.strftime('%A').lower()
+    start_time, end_time = get_schedule_window_for_day(schedule, day_name)
+    start_h, start_m = map(int, start_time.split(':'))
+    end_h, end_m = map(int, end_time.split(':'))
 
     from_ts = datetime(target_date.year, target_date.month, target_date.day,
                        start_h, start_m, 0, tzinfo=timezone.utc)
     to_ts = datetime(target_date.year, target_date.month, target_date.day,
                      end_h, end_m, 0, tzinfo=timezone.utc)
 
-    # Fetch raw recent events and filter in memory to avoid Firestore 
-    # requiring a manual Composite Index for Time + Type combinations.
-    raw_events = EventRepository.query(limit=2000)
-    events = []
-    for e in raw_events:
-        if e.type != "access_granted":
-            continue
-        # Ensure timestamp is UTC for accurate bounds checking
-        ts = e.timestamp
-        if ts and ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
-            
-        if ts and from_ts <= ts <= to_ts:
-            events.append(e)
+    events = EventRepository.query(
+        event_type="access_granted",
+        from_time=from_ts,
+        to_time=to_ts,
+        limit=2000,
+    )
 
     all_users = UserRepository.get_all()
     user_map = {u.id: u for u in all_users if u.id}

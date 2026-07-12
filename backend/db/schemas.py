@@ -63,6 +63,8 @@ class UserCreate(BaseModel):
     student_id: str = Field(..., pattern=r"^\d{8}$")
     role: UserRole
     active: bool = True
+    biometric_consent: bool = Field(False, description="Has user signed/agreed to the biometric disclosure?")
+    consent_timestamp: Optional[datetime] = None
 
 
 class UserModel(BaseModel):
@@ -71,8 +73,9 @@ class UserModel(BaseModel):
     student_id: Optional[str] = None
     role: UserRole
     active: bool = True
+    biometric_consent: bool = False
+    consent_timestamp: Optional[datetime] = None
     face_encoding_ref: Optional[str] = None
-    face_descriptor: Optional[list[float]] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -100,18 +103,30 @@ class UserUpdate(BaseModel):
     student_id: Optional[str] = None
     role: Optional[UserRole] = None
     active: Optional[bool] = None
+    biometric_consent: Optional[bool] = None
+    consent_timestamp: Optional[datetime] = None
 
 
 # ── Schedule ───────────────────────────────────────────
 
 VALID_DAYS = {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
+TIME_PATTERN = r"^\d{2}:\d{2}$"
+
+
+class DayTimeWindow(BaseModel):
+    """Per-day class hours for a schedule."""
+    start_time: str = Field(..., pattern=TIME_PATTERN)
+    end_time: str = Field(..., pattern=TIME_PATTERN)
 
 
 class ScheduleCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     days: list[str]
-    start_time: str = Field(..., pattern=r"^\d{2}:\d{2}$")
-    end_time: str = Field(..., pattern=r"^\d{2}:\d{2}$")
+    start_time: str = Field(..., pattern=TIME_PATTERN)
+    end_time: str = Field(..., pattern=TIME_PATTERN)
+    # Optional per-day overrides: {"monday": {"start_time":"08:00","end_time":"10:00"}, ...}
+    # When set for a day, that day's window is used instead of the global start/end.
+    day_times: Optional[dict[str, DayTimeWindow]] = None
     roles: list[UserRole] = []
     user_overrides: list[str] = []
     room_id: Optional[str] = None
@@ -126,6 +141,22 @@ class ScheduleCreate(BaseModel):
                 raise ValueError(f"Invalid day: {day}. Must be one of {VALID_DAYS}")
         return [d.lower() for d in v]
 
+    @field_validator("day_times")
+    @classmethod
+    def validate_day_times(cls, v):
+        if v is None:
+            return v
+        normalized: dict[str, DayTimeWindow] = {}
+        for day, window in v.items():
+            day_l = day.lower()
+            if day_l not in VALID_DAYS:
+                raise ValueError(f"Invalid day in day_times: {day}")
+            if isinstance(window, DayTimeWindow):
+                normalized[day_l] = window
+            else:
+                normalized[day_l] = DayTimeWindow.model_validate(window)
+        return normalized
+
 
 class ScheduleModel(BaseModel):
     id: Optional[str] = None
@@ -133,14 +164,23 @@ class ScheduleModel(BaseModel):
     days: list[str]
     start_time: str
     end_time: str
+    day_times: Optional[dict[str, DayTimeWindow]] = None
     roles: list[str] = []
     user_overrides: list[str] = []
     room_id: Optional[str] = None
     teacher_id: Optional[str] = None   # The specific teacher who can unlock this door
     active: bool = True
 
+    model_config = {"extra": "ignore"}
+
     def to_firestore(self) -> dict:
         data = self.model_dump(exclude={"id"}, exclude_none=True)
+        # Store day_times as plain dicts for Firestore
+        if data.get("day_times"):
+            data["day_times"] = {
+                day: (w if isinstance(w, dict) else w.model_dump() if hasattr(w, "model_dump") else w)
+                for day, w in data["day_times"].items()
+            }
         return data
 
 
@@ -149,11 +189,28 @@ class ScheduleUpdate(BaseModel):
     days: Optional[list[str]] = None
     start_time: Optional[str] = None
     end_time: Optional[str] = None
+    day_times: Optional[dict[str, DayTimeWindow]] = None
     roles: Optional[list[str]] = None
     user_overrides: Optional[list[str]] = None
     room_id: Optional[str] = None
     teacher_id: Optional[str] = None
     active: Optional[bool] = None
+
+    @field_validator("day_times")
+    @classmethod
+    def validate_day_times(cls, v):
+        if v is None:
+            return v
+        normalized: dict[str, DayTimeWindow] = {}
+        for day, window in v.items():
+            day_l = day.lower()
+            if day_l not in VALID_DAYS:
+                raise ValueError(f"Invalid day in day_times: {day}")
+            if isinstance(window, DayTimeWindow):
+                normalized[day_l] = window
+            else:
+                normalized[day_l] = DayTimeWindow.model_validate(window)
+        return normalized
 
 
 # ── Permission ─────────────────────────────────────────
